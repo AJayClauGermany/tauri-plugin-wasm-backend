@@ -1,3 +1,9 @@
 [default]
-description = "Default permissions for the plugin"
-permissions = ["allow-ping"]
+description = """
+Allows the frontend to invoke WASM backend modules and list them.
+
+App modules are invocable unless their config sets `expose: false`; external
+plugins need an explicit `allow-invoke` scope entry. Reloading modules and
+generating TypeScript bindings are not included.
+"""
+permissions = ["allow-invoke", "allow-list-modules"]

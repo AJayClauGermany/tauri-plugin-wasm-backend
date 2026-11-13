@@ -1,0 +1,41 @@
+package test:fixture;
+
+interface math {
+  double: func(x: s32) -> s32;
+}
+
+world fixture {
+  include tauri:backend/module-with-events@0.1.0;
+
+  record person {
+    name: string,
+    age-years: u32,
+    nickname: option<string>,
+  }
+
+  enum mood { happy, sad }
+
+  variant shape {
+    circle(f64),
+    square(f64),
+    point,
+  }
+
+  flags perms { read, write }
+
+  export math;
+
+  export greet: func(name: string) -> string;
+  export add: func(a: s32, b: s32) -> s32;
+  export describe: func(person: person) -> result<person, string>;
+  export area: func(shape: shape) -> f64;
+  export flip: func(mood: mood) -> mood;
+  export perms-of: func(p: perms) -> list<string>;
+  export swap: func(t: tuple<u8, string>) -> tuple<string, u8>;
+  export count: func() -> u32;
+  export emit-event: func(name: string, payload: string) -> result<_, string>;
+  export call-host: func(command: string, args: string) -> result<string, string>;
+  export last-event: func() -> option<string>;
+  export spin: func();
+  export crash: func();
+}

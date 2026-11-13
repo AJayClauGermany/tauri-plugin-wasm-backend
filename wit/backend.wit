@@ -1,0 +1,55 @@
+package tauri:backend@0.1.0;
+
+/// Functions the Tauri app (the host) provides to WASM backend modules.
+///
+/// Every call is checked against the capabilities granted to the module, the
+/// same way frontend IPC is checked against Tauri capabilities.
+interface host {
+  enum log-level {
+    trace,
+    debug,
+    info,
+    warn,
+    error,
+  }
+
+  /// Write a message to the app's log (the `log` crate on the Rust side).
+  log: func(level: log-level, message: string);
+
+  /// Emit a Tauri event to the frontend and Rust listeners.
+  /// `payload` is a JSON document. Requires the event to be allowed by the
+  /// module's `events.emit` capability.
+  emit: func(event: string, payload: string) -> result<_, string>;
+
+  /// Invoke a host command registered by the app with
+  /// `Builder::host_command`. `args` is a JSON document and the result is a
+  /// JSON document. Requires the command to be allowed by the module's
+  /// `hostCommands` capability.
+  invoke: func(command: string, args: string) -> result<string, string>;
+}
+
+/// Optional interface a module exports to receive app events it subscribed
+/// to through the `events.listen` capability.
+interface events {
+  /// `payload` is the event's JSON payload.
+  on-event: func(event: string, payload: string);
+}
+
+/// Base world for a backend module. Include it in your own world and export
+/// your commands as top-level functions, e.g.
+///
+/// ```wit
+/// world greeter {
+///   include tauri:backend/module@0.1.0;
+///   export greet: func(name: string) -> string;
+/// }
+/// ```
+world module {
+  import host;
+}
+
+/// Same as `module`, plus event handling.
+world module-with-events {
+  import host;
+  export events;
+}

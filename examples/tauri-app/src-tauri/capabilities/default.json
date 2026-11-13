@@ -7,6 +7,14 @@
   ],
   "permissions": [
     "core:default",
-    "wasm-backend:default"
+    "wasm-backend:default",
+    "wasm-backend:allow-reload-module",
+    {
+      "identifier": "wasm-backend:allow-invoke",
+      "allow": [
+        { "module": "greeter" },
+        { "module": "stats", "command": "summarize" }
+      ]
+    }
   ]
 }

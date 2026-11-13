@@ -1,0 +1,19 @@
+package example:greeter;
+
+/// A backend module written in JavaScript.
+///
+/// Exported functions are commands the frontend can invoke, just like Rust
+/// `#[tauri::command]`s: `invokeModule('greeter', 'greet', { name })`.
+world greeter {
+  /// Host API (log, emit, invoke) and the `on-event` export.
+  include tauri:backend/module-with-events@0.1.0;
+
+  record person {
+    name: string,
+    age-years: u32,
+  }
+
+  export greet: func(name: string) -> string;
+  export describe: func(person: person) -> result<string, string>;
+  export increment: func(by: u32) -> u32;
+}

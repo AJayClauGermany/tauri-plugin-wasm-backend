@@ -15,9 +15,49 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-tauri-build = { version = "2.7.4", default-features = false }
+tauri-build = { version = "2.7.4", default-features = false , features = [] }
 
 [dependencies]
-tauri = { version = "2.12.5" }
+tauri = { version = "2.12.5", features = [] }
 tauri-plugin-wasm-backend = { path = "../../../" }
+serde_json = "1"
 
+# Compiling WASM with an unoptimized compiler is slow. Optimizing just the
+# compiler crates keeps module (re)loads fast in `tauri dev` without slowing
+# down the build of the rest of the app much.
+[profile.dev.package.cranelift-assembler-x64]
+opt-level = 3
+[profile.dev.package.cranelift-bforest]
+opt-level = 3
+[profile.dev.package.cranelift-bitset]
+opt-level = 3
+[profile.dev.package.cranelift-codegen]
+opt-level = 3
+[profile.dev.package.cranelift-control]
+opt-level = 3
+[profile.dev.package.cranelift-entity]
+opt-level = 3
+[profile.dev.package.cranelift-frontend]
+opt-level = 3
+[profile.dev.package.gimli]
+opt-level = 3
+[profile.dev.package.object]
+opt-level = 3
+[profile.dev.package.regalloc2]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.wasm-encoder]
+opt-level = 3
+[profile.dev.package.wasmparser]
+opt-level = 3
+[profile.dev.package.wasmtime]
+opt-level = 3
+[profile.dev.package.wasmtime-environ]
+opt-level = 3
+[profile.dev.package.wasmtime-internal-cache]
+opt-level = 3
+[profile.dev.package.wasmtime-internal-core]
+opt-level = 3
+[profile.dev.package.wasmtime-internal-cranelift]
+opt-level = 3

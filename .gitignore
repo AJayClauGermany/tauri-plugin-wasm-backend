@@ -15,3 +15,8 @@ node_modules/
 
 dist-js
 dist
+
+# Test fixture build outputs
+/tests/fixtures/*/target
+/tests/fixtures/*/wit/deps
+/tests/fixtures/*/Cargo.lock

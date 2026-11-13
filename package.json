@@ -2,18 +2,23 @@
   "name": "tauri-plugin-wasm-backend-api",
   "version": "0.1.0",
   "license": "Apache-2.0 WITH LLVM-exception",
-  "description": "",
+  "description": "Frontend API for tauri-plugin-wasm-backend: invoke hot-reloadable WASM backend modules.",
   "type": "module",
   "types": "./dist-js/index.d.ts",
   "main": "./dist-js/index.cjs",
   "module": "./dist-js/index.js",
   "exports": {
-    "types": "./dist-js/index.d.ts",
-    "import": "./dist-js/index.js",
-    "require": "./dist-js/index.cjs"
+    ".": {
+      "types": "./dist-js/index.d.ts",
+      "import": "./dist-js/index.js",
+      "require": "./dist-js/index.cjs"
+    },
+    "./wit/*": "./wit/*",
+    "./package.json": "./package.json"
   },
   "files": [
     "dist-js",
+    "wit",
     "README.md"
   ],
   "scripts": {
