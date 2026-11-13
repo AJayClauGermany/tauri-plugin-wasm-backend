@@ -13,7 +13,7 @@ default = ["component", "extism", "hot-reload"]
 # WIT / WebAssembly component model engine (wasmtime).
 component = ["dep:wasmtime", "dep:wasmtime-wasi"]
 # Extism plugin engine.
-extism = ["dep:extism"]
+extism = ["dep:extism", "dep:wasmtime"]
 # Watch module files and reload them on change.
 hot-reload = ["dep:notify"]
 # Derive `specta::Type` on the public models for use with tauri-specta

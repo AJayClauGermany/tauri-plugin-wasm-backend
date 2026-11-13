@@ -12,8 +12,10 @@
     {
       "identifier": "wasm-backend:allow-invoke",
       "allow": [
-        { "module": "greeter" },
-        { "module": "stats", "command": "summarize" }
+        {
+          "module": "stats",
+          "command": "summarize"
+        }
       ]
     }
   ]

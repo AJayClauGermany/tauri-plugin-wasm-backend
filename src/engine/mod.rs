@@ -109,6 +109,12 @@ pub struct ParamInfo {
     pub ty: String,
 }
 
+/// A JavaScript string literal (JSON strings are valid JS).
+#[allow(dead_code)]
+pub(crate) fn js_string(s: &str) -> String {
+    serde_json::Value::String(s.to_string()).to_string()
+}
+
 /// Detect the engine to use for a binary.
 pub(crate) fn detect(bytes: &[u8], configured: EngineKind) -> EngineKind {
     match configured {

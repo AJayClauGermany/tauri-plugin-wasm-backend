@@ -69,6 +69,7 @@ fn caps() -> Capabilities {
         .allow_emit("test://*")
         .allow_host_command("echo")
         .allow_host_command("reenter")
+        .allow_host_command("list")
         .listen("app://ping")
 }
 
@@ -84,6 +85,16 @@ fn app(builder: Builder<MockRuntime>) -> tauri::App<MockRuntime> {
                         .wasm_backend()
                         .invoke(&ctx.module, "count", Value::Null)
                         .map_err(|e| e.to_string())
+                })
+                // Reads the registry while the calling module is running.
+                .host_command("list", |ctx, _: Value| {
+                    let b = ctx.app.wasm_backend();
+                    let names: Vec<String> = b.modules().into_iter().map(|m| m.name).collect();
+                    let info = b.module(&ctx.module).map_err(|e| e.to_string())?;
+                    let ts = b.typescript(&ctx.module).map_err(|e| e.to_string())?;
+                    Ok::<_, String>(
+                        json!({ "names": names, "self": info.name, "ts": !ts.is_empty() }),
+                    )
                 })
                 .host_command("secret", |_, _: ()| Ok::<_, String>("nope"))
                 .build(),
@@ -329,6 +340,12 @@ fn check_host_api(
     let err = call_host("secret", json!(null)).unwrap_err().to_string();
     assert!(err.contains("not allowed to invoke"), "{err}");
 
+    // Host commands can inspect the registry while the module is running.
+    assert_eq!(
+        call_host("list", json!(null)).unwrap(),
+        json!({ "names": [module], "self": module, "ts": true })
+    );
+
     // Calling back into the same module is detected instead of deadlocking.
     let err = call_host("reenter", json!(null)).unwrap_err().to_string();
     assert!(err.contains("reentrant"), "{err}");
@@ -410,6 +427,17 @@ fn extism_commands() {
         b.invoke("ext", "nope", Value::Null),
         Err(Error::CommandNotFound { .. })
     ));
+    // Traps are runtime errors, not command errors.
+    assert!(matches!(
+        b.invoke("ext", "crash", Value::Null),
+        Err(Error::Runtime(_))
+    ));
+    assert_eq!(
+        b.invoke("ext", "greet", json!({ "name": "again" }))
+            .unwrap(),
+        json!("Hello, again!")
+    );
+
     // Event handlers aren't commands.
     assert!(matches!(
         b.invoke("ext", "on_event", Value::Null),
@@ -541,6 +569,27 @@ fn external_plugins() {
     std::fs::remove_file(dir.join("third-party.wasm")).unwrap();
     assert_eq!(wait_for(&rx), r#""third-party""#);
     assert!(b.module("third-party").is_err());
+}
+
+#[test]
+fn external_plugins_dir_created_at_startup_is_watched() {
+    let dir = temp_dir("external-missing");
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    let app = app(Builder::new().hot_reload(true).external(ExternalConfig {
+        dir: dir.clone(),
+        capabilities: Capabilities::default(),
+        expose: false,
+        engine: EngineKind::Auto,
+    }));
+    assert!(dir.is_dir());
+    let (tx, rx) = mpsc::channel();
+    app.listen_any(tauri_plugin_wasm_backend::EVENT_MODULE_LOADED, move |e| {
+        tx.send(e.payload().to_string()).unwrap();
+    });
+    copy(&extism(), &dir.join("late-plugin.wasm"));
+    let payload: Value = serde_json::from_str(&wait_for(&rx)).unwrap();
+    assert_eq!(payload["name"], json!("late-plugin"));
 }
 
 #[test]

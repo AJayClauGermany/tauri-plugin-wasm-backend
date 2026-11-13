@@ -180,10 +180,15 @@ impl<R: Runtime> Builder<R> {
                 }
 
                 let external = match &config.external {
-                    Some(ext) => Some(backend::External {
-                        dir: backend::resolve_dir(app, &ext.dir, BaseDirectory::AppData)?,
-                        config: ext.clone(),
-                    }),
+                    Some(ext) => {
+                        let dir = backend::resolve_dir(app, &ext.dir, BaseDirectory::AppData)?;
+                        // Create it before the watcher starts so it can be watched.
+                        std::fs::create_dir_all(&dir)?;
+                        Some(backend::External {
+                            dir,
+                            config: ext.clone(),
+                        })
+                    }
                     None => None,
                 };
                 let typescript_dir = typescript_out_dir
@@ -208,6 +213,8 @@ impl<R: Runtime> Builder<R> {
                     }
                 }
                 backend.sync_external();
+                #[cfg(feature = "hot-reload")]
+                watcher::sync(&backend);
                 Ok(())
             })
             .build()

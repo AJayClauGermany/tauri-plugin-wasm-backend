@@ -39,9 +39,9 @@ impl InvokeScope {
     }
 }
 
-/// Deny entries always win. If there are allow entries, one must match;
-/// otherwise the module must be exposed (app modules are by default,
-/// external plugins aren't).
+/// Deny entries always win. Otherwise a module is invocable if it is exposed
+/// (app modules are by default, external plugins aren't) or an allow entry
+/// matches. Like Tauri capabilities, allow entries only add access.
 fn check_scope(
     allows: &[&InvokeScope],
     denies: &[&InvokeScope],
@@ -52,11 +52,7 @@ fn check_scope(
     if denies.iter().any(|s| s.matches(module, command)) {
         return false;
     }
-    if allows.is_empty() {
-        exposed
-    } else {
-        allows.iter().any(|s| s.matches(module, command))
-    }
+    exposed || allows.iter().any(|s| s.matches(module, command))
 }
 
 #[command]
@@ -69,6 +65,7 @@ pub(crate) async fn invoke<R: Runtime>(
     args: Option<Value>,
 ) -> Result<Value> {
     let backend = app.wasm_backend();
+    backend.module(&module)?;
     let allows: Vec<&InvokeScope> = command_scope
         .allows()
         .iter()
@@ -138,10 +135,12 @@ mod tests {
         // No scope: exposure decides.
         assert!(check_scope(&[], &[], true, "greeter", "greet"));
         assert!(!check_scope(&[], &[], false, "plugin", "run"));
-        // Allow lists are exhaustive, even for exposed modules.
-        assert!(check_scope(&[&greet], &[], true, "greeter", "greet"));
-        assert!(!check_scope(&[&greet], &[], true, "greeter", "add"));
+        // Allow entries add access; they don't revoke it from exposed modules.
+        assert!(check_scope(&[&greet], &[], true, "greeter", "add"));
+        assert!(check_scope(&[&greet], &[], false, "greeter", "greet"));
+        assert!(!check_scope(&[&greet], &[], false, "greeter", "add"));
         assert!(check_scope(&[&any_greeter], &[], false, "greeter", "add"));
+        assert!(!check_scope(&[&any_greeter], &[], false, "plugin", "run"));
         // Command names match across naming conventions.
         assert!(check_scope(
             &[&scope("m", Some("get_user"))],

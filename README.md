@@ -257,8 +257,10 @@ The plugin's commands are regular Tauri commands, controlled by
 - `wasm-backend:default`: `allow-invoke` and `allow-list-modules`.
 - `allow-reload-module`, `allow-typescript`: development helpers.
 
-Without a scope, `invoke` can call every module that is *exposed* (app modules
-unless `"expose": false`; external plugins never). Scopes restrict it further:
+`invoke` can call every module that is *exposed* (app modules unless
+`"expose": false`; external plugins never), plus whatever `allow` scope entries
+match. Like Tauri capabilities, allow entries only add access; use `deny`
+entries or `"expose": false` to restrict it:
 
 ```json
 {

@@ -94,6 +94,17 @@ impl ExtismInstance {
             .call::<&str, Vec<u8>>(function, input)
             .map_err(|e| {
                 let msg = e.to_string();
+                let trapped = e
+                    .chain()
+                    .any(|c| c.downcast_ref::<wasmtime::Trap>().is_some());
+                if trapped || msg == "timeout" || msg == "oom" {
+                    let msg = if msg == "timeout" {
+                        "call timed out".to_string()
+                    } else {
+                        format!("{e:#}")
+                    };
+                    return Error::Runtime(msg);
+                }
                 // Plugin-set errors are usually strings; pass JSON through as is.
                 Error::Command(serde_json::from_str(&msg).unwrap_or(Value::String(msg)))
             })
@@ -154,8 +165,10 @@ impl ModuleInstance for ExtismInstance {
         let mut out = String::new();
         for name in &self.exports {
             out.push_str(&format!(
-                "  {fname}: <T = unknown>(input?: unknown): Promise<T> =>\n    invokeModule<T>({module:?}, {name:?}, input),\n",
+                "  {fname}: <T = unknown>(input?: unknown): Promise<T> =>\n    invokeModule<T>({module}, {name}, input),\n",
                 fname = naming::to_camel(name),
+                module = super::js_string(module),
+                name = super::js_string(name),
             ));
         }
         Some(out)

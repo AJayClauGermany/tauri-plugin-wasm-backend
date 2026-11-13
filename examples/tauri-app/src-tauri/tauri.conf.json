@@ -61,6 +61,7 @@
         "stats": {
           "path": "wasm/stats.wasm",
           "devPath": "../wasm/dist/stats.wasm",
+          "expose": false,
           "capabilities": {
             "events": {
               "emit": [

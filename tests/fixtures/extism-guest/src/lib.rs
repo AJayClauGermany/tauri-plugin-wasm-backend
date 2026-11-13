@@ -49,6 +49,11 @@ pub fn fail() -> FnResult<String> {
 }
 
 #[plugin_fn]
+pub fn crash() -> FnResult<String> {
+    panic!("crash requested")
+}
+
+#[plugin_fn]
 pub fn emit_event(Json(args): Json<Value>) -> FnResult<Json<Value>> {
     let raw = unsafe { tauri_emit(args.to_string())? };
     Ok(Json(reply(raw)?))

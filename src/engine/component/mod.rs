@@ -11,7 +11,7 @@ mod convert;
 use std::{
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -26,7 +26,7 @@ use wasmtime::{
 };
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
-use super::{CommandInfo, ModuleHost, ModuleInstance, ParamInfo, naming};
+use super::{CommandInfo, ModuleHost, ModuleInstance, ParamInfo, js_string, naming};
 use crate::{Error, Result};
 
 mod bindings {
@@ -103,7 +103,10 @@ impl wasmtime::CacheStore for MemoryCacheStore {
 struct Runtime {
     engine: Engine,
     linker: Linker<State>,
-    ticker: AtomicBool,
+    /// Advances the epoch while time-limited calls run; parked otherwise.
+    ticker: OnceLock<std::thread::Thread>,
+    /// Number of time-limited calls in flight.
+    timed_calls: AtomicUsize,
 }
 
 fn runtime() -> Result<&'static Runtime> {
@@ -136,7 +139,8 @@ fn runtime() -> Result<&'static Runtime> {
             Ok(Runtime {
                 engine,
                 linker,
-                ticker: AtomicBool::new(false),
+                ticker: OnceLock::new(),
+                timed_calls: AtomicUsize::new(0),
             })
         })
         .as_ref()
@@ -144,18 +148,40 @@ fn runtime() -> Result<&'static Runtime> {
 }
 
 impl Runtime {
-    fn ensure_ticker(&'static self) {
-        if !self.ticker.swap(true, Ordering::SeqCst) {
+    fn ticker(&'static self) -> &'static std::thread::Thread {
+        self.ticker.get_or_init(|| {
             std::thread::Builder::new()
                 .name("wasm-backend-epoch".into())
                 .spawn(move || {
                     loop {
+                        if self.timed_calls.load(Ordering::SeqCst) == 0 {
+                            // Spurious wakeups just loop again.
+                            std::thread::park();
+                            continue;
+                        }
                         std::thread::sleep(EPOCH_TICK);
                         self.engine.increment_epoch();
                     }
                 })
-                .expect("failed to spawn epoch thread");
-        }
+                .expect("failed to spawn epoch thread")
+                .thread()
+                .clone()
+        })
+    }
+
+    /// Keep the epoch advancing while the returned guard lives.
+    fn timed_call(&'static self) -> TimedCall {
+        self.timed_calls.fetch_add(1, Ordering::SeqCst);
+        self.ticker().unpark();
+        TimedCall(self)
+    }
+}
+
+struct TimedCall(&'static Runtime);
+
+impl Drop for TimedCall {
+    fn drop(&mut self) {
+        self.0.timed_calls.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -188,9 +214,6 @@ impl ComponentInstance {
             .instantiate_pre(&component)
             .map_err(load_err)?;
         let (commands, on_event) = exports(&runtime.engine, &component);
-        if host.capabilities.timeout_ms.is_some() {
-            runtime.ensure_ticker();
-        }
         let store = new_store(runtime, &host)?;
         let mut this = Self {
             runtime,
@@ -216,12 +239,20 @@ impl ComponentInstance {
             self.instance = None;
         }
         self.set_deadline();
+        let _timed = self.timed();
         let instance = self
             .pre
             .instantiate(&mut self.store)
             .map_err(|e| Error::Runtime(format!("{e:#}")))?;
         self.instance = Some(instance);
         Ok(())
+    }
+
+    fn timed(&self) -> Option<TimedCall> {
+        self.host
+            .capabilities
+            .timeout_ms
+            .map(|_| self.runtime.timed_call())
     }
 
     fn set_deadline(&mut self) {
@@ -246,7 +277,10 @@ impl ComponentInstance {
             .get_func(&mut self.store, index)
             .ok_or_else(|| Error::Runtime("export is not a function".into()))?;
         self.set_deadline();
-        if let Err(e) = func.call(&mut self.store, params, results) {
+        let timed = self.timed();
+        let result = func.call(&mut self.store, params, results);
+        drop(timed);
+        if let Err(e) = result {
             // The instance may be left in an inconsistent state; start over
             // on the next call.
             self.instance = None;
@@ -478,9 +512,10 @@ impl ModuleInstance for ComponentInstance {
                 out.push_str(&format!("  /** WIT: `{}` -> `{r}` */\n", cmd.info.name));
             }
             out.push_str(&format!(
-                "  {fname}: ({sig}): Promise<{ret}> =>\n    invokeModule<{ret}>({module:?}, {name:?}, {{ {args} }}),\n",
+                "  {fname}: ({sig}): Promise<{ret}> =>\n    invokeModule<{ret}>({module}, {name}, {{ {args} }}),\n",
                 fname = naming::to_camel(&cmd.info.name),
-                name = cmd.info.name,
+                module = js_string(module),
+                name = js_string(&cmd.info.name),
             ));
         }
         Some(out)

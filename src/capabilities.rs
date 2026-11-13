@@ -74,7 +74,9 @@ pub struct WasiCapabilities {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Preopen {
     /// Host directory. May start with `$APPDATA`, `$APPLOCALDATA`,
-    /// `$APPCACHE`, `$APPCONFIG`, `$RESOURCE` or `$TEMP`.
+    /// `$APPCACHE`, `$APPCONFIG`, `$RESOURCE` or `$TEMP`; other relative
+    /// paths are resolved against the app data directory. Writable
+    /// directories are created if missing.
     pub host: PathBuf,
     /// Path the directory is visible under inside the module.
     pub guest: String,
