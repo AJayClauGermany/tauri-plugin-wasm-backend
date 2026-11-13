@@ -207,6 +207,16 @@ and the frontend receives `wasm-backend://module-reloaded`
   of names, `list<u8>` is an array of numbers.
 - A trap (panic, uncaught JS exception, timeout, out of memory) rejects the
   call; the module is re-instantiated (state reset) for the next call.
+  To return an error the frontend can handle, declare the function as
+  `-> result<T, E>`: a JS `throw` then becomes `err` and the promise rejects
+  with the thrown value, keeping module state. In a function without a
+  `result` return type (e.g. `-> string`), a `throw` has nowhere to go and
+  traps, so the frontend gets only a generic
+  ``"WASM runtime error: … wasm `unreachable` instruction executed"`` string
+  and module state is reset.
+- A module that fails to *build* (e.g. a JS syntax error) never reaches the
+  app: the build tool reports it, and the previously loaded version keeps
+  running.
 
 ## Host API
 
@@ -349,11 +359,25 @@ With the `specta` feature, the plugin's own models (`ModuleInfo`,
 [`examples/tauri-app`](examples/tauri-app) has a JavaScript WIT module
 (`wasm/greeter`) and a Rust Extism module (`wasm/stats`):
 
+The example uses the frontend API from this repository (`file:../../`), so
+build it first. Its `dist-js/` output isn't committed, and without it Vite
+fails with `Failed to resolve import "tauri-plugin-wasm-backend-api"`.
+
 ```sh
+# 1. Build the frontend API at the repository root
+pnpm install
+pnpm build
+
+# 2. Install and run the example
 cd examples/tauri-app
 pnpm install
 pnpm tauri dev   # then edit wasm/greeter/index.js
 ```
+
+pnpm copies `file:` dependencies when it installs them, so run
+`pnpm install` in `examples/tauri-app` again whenever you rebuild the API
+(after the first build, or after changing `guest-js/`). If the import still
+fails, delete `examples/tauri-app/node_modules` and reinstall.
 
 ## Platform notes
 
