@@ -2,16 +2,39 @@
 name = "tauri-plugin-wasm-backend"
 version = "0.1.0"
 license = "Apache-2.0 WITH LLVM-exception"
-description = ""
+description = "Run hot-reloadable, capability-restricted WebAssembly backend modules (WIT components or Extism plugins) inside a Tauri app."
 edition = "2024"
 rust-version = "1.90"
-exclude = ["/examples", "/dist-js", "/guest-js", "/node_modules"]
+exclude = ["/examples", "/dist-js", "/guest-js", "/node_modules", "/tests/fixtures/*/target"]
 links = "tauri-plugin-wasm-backend"
+
+[features]
+default = ["component", "extism", "hot-reload"]
+# WIT / WebAssembly component model engine (wasmtime).
+component = ["dep:wasmtime", "dep:wasmtime-wasi"]
+# Extism plugin engine.
+extism = ["dep:extism", "dep:wasmtime"]
+# Watch module files and reload them on change.
+hot-reload = ["dep:notify"]
+# Derive `specta::Type` on the public models for use with tauri-specta
+# (2.0.0-rc.28, which pins specta =2.0.0-rc.28).
+specta = ["dep:specta"]
 
 [dependencies]
 tauri = { version = "2.12.5" }
-serde = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1"
 thiserror = "2"
+log = "0.4"
+# Keep in lock-step with the wasmtime version used by `extism` so it is only compiled once.
+wasmtime = { version = "49", optional = true, features = ["incremental-cache"] }
+wasmtime-wasi = { version = "49", optional = true }
+extism = { version = "1.41", optional = true }
+notify = { version = "8", optional = true }
+specta = { version = "=2.0.0-rc.28", optional = true, features = ["derive"] }
+
+[dev-dependencies]
+tauri = { version = "2.12.5", features = ["test"] }
 
 [build-dependencies]
 tauri-plugin = { version = "2.7.2", features = ["build"] }

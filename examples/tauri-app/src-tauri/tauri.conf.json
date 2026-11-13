@@ -32,6 +32,56 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../wasm/dist/": "wasm/"
+    }
+  },
+  "plugins": {
+    "wasm-backend": {
+      "modules": {
+        "greeter": {
+          "path": "wasm/greeter.wasm",
+          "devPath": "../wasm/dist/greeter.wasm",
+          "capabilities": {
+            "hostCommands": [
+              "app_version"
+            ],
+            "events": {
+              "emit": [
+                "greeter://*"
+              ],
+              "listen": [
+                "app://ping"
+              ]
+            },
+            "timeoutMs": 1000
+          }
+        },
+        "stats": {
+          "path": "wasm/stats.wasm",
+          "devPath": "../wasm/dist/stats.wasm",
+          "expose": false,
+          "capabilities": {
+            "events": {
+              "emit": [
+                "stats://computed"
+              ]
+            }
+          }
+        }
+      },
+      "external": {
+        "dir": "$APPDATA/plugins",
+        "capabilities": {
+          "events": {
+            "emit": [
+              "plugin://*"
+            ]
+          }
+        }
+      },
+      "typescriptOutDir": "../src/lib/wasm"
+    }
   }
 }

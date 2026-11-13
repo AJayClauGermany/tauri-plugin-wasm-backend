@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Backend module build outputs
+/wasm/dist
+/wasm/*/target
+/wasm/*/Cargo.lock
+/wasm/*/wit/deps

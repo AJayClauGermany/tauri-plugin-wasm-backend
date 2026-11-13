@@ -7,6 +7,16 @@
   ],
   "permissions": [
     "core:default",
-    "wasm-backend:default"
+    "wasm-backend:default",
+    "wasm-backend:allow-reload-module",
+    {
+      "identifier": "wasm-backend:allow-invoke",
+      "allow": [
+        {
+          "module": "stats",
+          "command": "summarize"
+        }
+      ]
+    }
   ]
 }
