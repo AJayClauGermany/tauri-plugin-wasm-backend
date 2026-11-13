@@ -207,6 +207,16 @@ and the frontend receives `wasm-backend://module-reloaded`
   of names, `list<u8>` is an array of numbers.
 - A trap (panic, uncaught JS exception, timeout, out of memory) rejects the
   call; the module is re-instantiated (state reset) for the next call.
+  To return an error the frontend can handle, declare the function as
+  `-> result<T, E>`: a JS `throw` then becomes `err` and the promise rejects
+  with the thrown value, keeping module state. In a function without a
+  `result` return type (e.g. `-> string`), a `throw` has nowhere to go and
+  traps, so the frontend gets only a generic
+  ``"WASM runtime error: … wasm `unreachable` instruction executed"`` string
+  and module state is reset.
+- A module that fails to *build* (e.g. a JS syntax error) never reaches the
+  app: the build tool reports it, and the previously loaded version keeps
+  running.
 
 ## Host API
 
