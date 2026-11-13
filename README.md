@@ -349,11 +349,25 @@ With the `specta` feature, the plugin's own models (`ModuleInfo`,
 [`examples/tauri-app`](examples/tauri-app) has a JavaScript WIT module
 (`wasm/greeter`) and a Rust Extism module (`wasm/stats`):
 
+The example uses the frontend API from this repository (`file:../../`), so
+build it first. Its `dist-js/` output isn't committed, and without it Vite
+fails with `Failed to resolve import "tauri-plugin-wasm-backend-api"`.
+
 ```sh
+# 1. Build the frontend API at the repository root
+pnpm install
+pnpm build
+
+# 2. Install and run the example
 cd examples/tauri-app
 pnpm install
 pnpm tauri dev   # then edit wasm/greeter/index.js
 ```
+
+pnpm copies `file:` dependencies when it installs them, so run
+`pnpm install` in `examples/tauri-app` again whenever you rebuild the API
+(after the first build, or after changing `guest-js/`). If the import still
+fails, delete `examples/tauri-app/node_modules` and reinstall.
 
 ## Platform notes
 
