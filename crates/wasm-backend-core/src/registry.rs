@@ -3,7 +3,7 @@
 
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fmt::Display,
     hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use crate::{
     Error, Result,
-    capabilities::{Capabilities, Preopen},
+    capabilities::{Capabilities, Preopen, name_matches},
     config::{EngineKind, ExternalConfig, ModuleConfig},
     engine::{self, CommandInfo, ModuleHost, ModuleInstance},
     platform::{BaseDir, Platform, resolve_dir},
@@ -57,10 +57,25 @@ where
 {
     let command = name.into();
     Arc::new(move |call, args| {
-        let args = serde_json::from_value(args)
+        let args = deserialize_args(args)
             .map_err(|e| format!("invalid arguments for host command `{command}`: {e}"))?;
         let out = f(call, args).map_err(|e| e.to_string())?;
         serde_json::to_value(out).map_err(|e| e.to_string())
+    })
+}
+
+/// "No arguments" arrives as `null` (`invoke('cmd', 'null')`) or `{}` (a
+/// typed import without parameters). Accept either for `()`, `Option`s and
+/// structs whose fields all have defaults.
+fn deserialize_args<A: DeserializeOwned>(args: Value) -> serde_json::Result<A> {
+    let other = match &args {
+        Value::Null => Some(Value::Object(Default::default())),
+        Value::Object(o) if o.is_empty() => Some(Value::Null),
+        _ => None,
+    };
+    serde_json::from_value(args).or_else(|e| match other {
+        Some(other) => serde_json::from_value(other).map_err(|_| e),
+        None => Err(e),
     })
 }
 
@@ -85,7 +100,17 @@ pub struct ModuleInfo {
     /// Incremented on every reload.
     pub generation: u64,
     pub commands: Vec<CommandInfo>,
+    /// Host commands the module imports as typed WIT functions, named as
+    /// registered. Each one was checked when the module loaded: it exists
+    /// and the module's capabilities allow it.
+    #[serde(default)]
+    pub imports: Vec<CommandInfo>,
     pub capabilities: Capabilities,
+    /// Likely configuration mistakes found when the module was (re)loaded,
+    /// e.g. a `hostCommands` entry that matches no registered host command.
+    /// Also logged as warnings.
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 /// Payload of [`EVENT_MODULE_ERROR`].
@@ -152,7 +177,8 @@ pub(crate) struct External {
 pub(crate) struct Inner<P: Platform> {
     pub(crate) platform: P,
     modules: RwLock<BTreeMap<String, Arc<Module<P>>>>,
-    host_commands: HashMap<String, HostCommandFn<P>>,
+    /// Sorted, so name lookups and listings are deterministic.
+    host_commands: BTreeMap<String, HostCommandFn<P>>,
     pub(crate) hot_reload: bool,
     dev: bool,
     pub(crate) external: Option<External>,
@@ -255,6 +281,31 @@ impl<P: Platform> engine::Host for Bridge<P> {
             args,
         )
     }
+
+    fn resolve_command(&self, name: &str) -> Option<String> {
+        let inner = self.0.upgrade()?;
+        resolve_host_command(&inner.host_commands, name).map(str::to_string)
+    }
+
+    fn command_names(&self) -> Vec<String> {
+        self.0
+            .upgrade()
+            .map(|inner| inner.host_commands.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+}
+
+/// Find a host command by name: exactly, else across naming conventions
+/// (`app-version` and `appVersion` find `app_version`), like module commands.
+fn resolve_host_command<'a, F>(commands: &'a BTreeMap<String, F>, name: &str) -> Option<&'a str> {
+    if let Some((k, _)) = commands.get_key_value(name) {
+        return Some(k);
+    }
+    let wanted = crate::naming::to_kebab(name);
+    commands
+        .keys()
+        .find(|k| crate::naming::to_kebab(k) == wanted)
+        .map(String::as_str)
 }
 
 pub(crate) fn valid_event_name(name: &str) -> bool {
@@ -281,6 +332,14 @@ fn js_single_quoted(s: &str) -> String {
     out
 }
 
+fn quoted_list(items: &[impl AsRef<str>]) -> String {
+    items
+        .iter()
+        .map(|i| format!("`{}`", i.as_ref()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn hash(bytes: &[u8]) -> u64 {
     let mut h = DefaultHasher::new();
     bytes.hash(&mut h);
@@ -290,7 +349,7 @@ fn hash(bytes: &[u8]) -> u64 {
 /// Configures a [`Backend`].
 pub struct BackendBuilder<P: Platform> {
     platform: P,
-    host_commands: HashMap<String, HostCommandFn<P>>,
+    host_commands: BTreeMap<String, HostCommandFn<P>>,
     hot_reload: bool,
     dev: bool,
     external: Option<ExternalConfig>,
@@ -299,8 +358,10 @@ pub struct BackendBuilder<P: Platform> {
 }
 
 impl<P: Platform> BackendBuilder<P> {
-    /// Register a host command that modules can call through the host
-    /// `invoke` function, if their capabilities allow it. See
+    /// Register a host command that modules can call, if their
+    /// capabilities allow it: through the host `invoke` function, or as a
+    /// typed function a WIT module imports (checked when it loads). Names
+    /// match across `snake_case`, `kebab-case` and `camelCase`. See
     /// [`host_command_fn`].
     pub fn host_command<A, T, E, F>(self, name: impl Into<String>, f: F) -> Self
     where
@@ -359,6 +420,14 @@ impl<P: Platform> BackendBuilder<P> {
     /// lets an integration publish the backend (e.g. as app state) before
     /// modules start running.
     pub fn build(self) -> Result<Backend<P>> {
+        let mut seen = BTreeMap::new();
+        for name in self.host_commands.keys() {
+            if let Some(other) = seen.insert(crate::naming::to_kebab(name), name) {
+                log::warn!(
+                    "host commands `{other}` and `{name}` only differ in naming convention; other spellings of them resolve to `{other}`"
+                );
+            }
+        }
         let external = match self.external {
             Some(config) => {
                 let dir = resolve_dir(&self.platform, &config.dir, BaseDir::AppData)?;
@@ -388,7 +457,7 @@ impl<P: Platform> Backend<P> {
     pub fn builder(platform: P) -> BackendBuilder<P> {
         BackendBuilder {
             platform,
-            host_commands: HashMap::new(),
+            host_commands: BTreeMap::new(),
             hot_reload: cfg!(debug_assertions),
             dev: cfg!(debug_assertions),
             external: None,
@@ -579,11 +648,15 @@ impl<P: Platform> Backend<P> {
             return Err(Error::ModuleNotFound(m.name.clone()));
         }
         let commands = instance.commands();
+        let imports = instance.imports();
+        let warnings = self.lint(&m.name, &m.config.capabilities, instance.as_ref());
         let typescript = instance.typescript(&m.name).unwrap_or_default();
         *m.instance() = instance;
         let info = {
             let mut meta = m.meta.write().unwrap_or_else(|e| e.into_inner());
             meta.info.commands = commands;
+            meta.info.imports = imports;
+            meta.info.warnings = warnings;
             meta.info.engine = kind;
             meta.info.generation += 1;
             meta.typescript = typescript;
@@ -637,6 +710,36 @@ impl<P: Platform> Backend<P> {
         self.get(name)
             .map(|m| m.meta().info.exposed)
             .unwrap_or(false)
+    }
+
+    /// Configuration that is valid but almost certainly not what was meant.
+    /// Not errors: e.g. the capabilities shared by all external plugins may
+    /// subscribe to events some plugins don't handle.
+    fn lint(&self, name: &str, caps: &Capabilities, instance: &dyn ModuleInstance) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if !caps.events.listen.is_empty() && !instance.handles_events() {
+            warnings.push(format!(
+                "`capabilities.events.listen` subscribes to {} but the module has no event handler, so these events are dropped (WIT: include `tauri:backend/module-with-events`; Extism: export `on_event`)",
+                quoted_list(&caps.events.listen)
+            ));
+        }
+        let registered: Vec<&String> = self.0.host_commands.keys().collect();
+        for pattern in &caps.host_commands {
+            if !registered.iter().any(|c| name_matches(pattern, c)) {
+                warnings.push(if registered.is_empty() {
+                    format!("`capabilities.hostCommands` allows `{pattern}`, but the app registers no host commands")
+                } else {
+                    format!(
+                        "`capabilities.hostCommands` entry `{pattern}` matches no registered host command (registered: {})",
+                        quoted_list(&registered)
+                    )
+                });
+            }
+        }
+        for w in &warnings {
+            log::warn!("WASM module `{name}`: {w}");
+        }
+        warnings
     }
 
     fn instantiate(
@@ -753,6 +856,7 @@ impl<P: Platform> Backend<P> {
         let started = SystemTime::now();
         let (instance, kind) = self.instantiate(name, &config, &bytes)?;
         let watched = path.is_some() && config.watch.unwrap_or(self.0.hot_reload);
+        let warnings = self.lint(name, &config.capabilities, instance.as_ref());
         let info = ModuleInfo {
             name: name.to_string(),
             engine: kind,
@@ -762,7 +866,9 @@ impl<P: Platform> Backend<P> {
             watched,
             generation: 0,
             commands: instance.commands(),
+            imports: instance.imports(),
             capabilities: config.capabilities.clone(),
+            warnings,
         };
         let module = Arc::new(Module {
             name: name.to_string(),
@@ -926,5 +1032,33 @@ impl<P: Platform> Backend<P> {
             })
             .collect::<Result<_>>()?;
         Ok(caps)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn no_arguments_is_null_or_empty_object() {
+        #[derive(Deserialize, Debug, PartialEq, Default)]
+        #[serde(default)]
+        struct Opts {
+            verbose: bool,
+        }
+        assert!(deserialize_args::<()>(json!(null)).is_ok());
+        assert!(deserialize_args::<()>(json!({})).is_ok());
+        assert_eq!(
+            deserialize_args::<Opts>(json!(null)).unwrap(),
+            Opts::default()
+        );
+        assert_eq!(deserialize_args::<Option<u32>>(json!({})).unwrap(), None);
+        // Real arguments are left alone, errors included.
+        assert!(deserialize_args::<()>(json!({ "x": 1 })).is_err());
+        let e = deserialize_args::<u32>(json!(null))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("invalid type: null"), "{e}");
     }
 }

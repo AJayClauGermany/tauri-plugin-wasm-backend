@@ -1,0 +1,34 @@
+package test:typed;
+
+/// Host commands, imported as typed functions.
+interface app {
+  record version {
+    major: u32,
+    minor: u32,
+    pre-release: option<string>,
+  }
+
+  app-version: func() -> version;
+  add-numbers: func(left-side: s32, right-side: s32) -> result<s32, string>;
+  fail-hard: func(message: string);
+}
+
+/// Resolved as `storage.get` (interface name first).
+interface storage {
+  get: func(key: string) -> option<string>;
+}
+
+world typed {
+  include tauri:backend/module@0.1.0;
+  import app;
+  import storage;
+  /// World-level imports work too (Rust guests; componentize-qjs only
+  /// supports interface imports).
+  import now-ms: func() -> u64;
+
+  export version: func() -> string;
+  export add: func(a: s32, b: s32) -> result<s32, string>;
+  export lookup: func(key: string) -> option<string>;
+  export fail-hard: func(message: string);
+  export now: func() -> u64;
+}

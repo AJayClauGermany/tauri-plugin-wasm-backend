@@ -15,12 +15,19 @@ pub(crate) mod extism;
 /// Type-erased access to the host app, implemented by the registry.
 pub(crate) trait Host: Send + Sync {
     fn emit(&self, event: &str, payload: Value) -> std::result::Result<(), String>;
+    /// Run a registered host command (`command` as returned by
+    /// [`Host::resolve_command`]).
     fn invoke(
         &self,
         module: &str,
         command: &str,
         args: Value,
     ) -> std::result::Result<Value, String>;
+    /// The registered host command `name` refers to: an exact match, else
+    /// one whose name matches across naming conventions.
+    fn resolve_command(&self, name: &str) -> Option<String>;
+    /// Names of every registered host command, sorted.
+    fn command_names(&self) -> Vec<String>;
 }
 
 /// Host functions as seen by one module: every call is checked against the
@@ -47,16 +54,56 @@ impl ModuleHost {
         self.host.emit(event, payload)
     }
 
+    /// The `invoke` host function: JSON strings in and out.
     pub fn invoke(&self, command: &str, args: &str) -> std::result::Result<String, String> {
-        if !self.capabilities.can_invoke(command) {
+        let command = self.resolve_command(command)?;
+        let args = parse_json_arg(args)?;
+        let out = self.host.invoke(&self.module, &command, args)?;
+        serde_json::to_string(&out).map_err(|e| e.to_string())
+    }
+
+    /// Run a host command resolved with [`ModuleHost::resolve_command`].
+    #[cfg_attr(not(feature = "component"), allow(dead_code))]
+    pub fn invoke_resolved(
+        &self,
+        command: &str,
+        args: Value,
+    ) -> std::result::Result<Value, String> {
+        self.host.invoke(&self.module, command, args)
+    }
+
+    /// The registered host command this module may call as `command`, or
+    /// why it can't. Capabilities are checked first, so a module learns
+    /// nothing about commands it isn't allowed to call.
+    pub fn resolve_command(&self, command: &str) -> std::result::Result<String, String> {
+        let registered = self.host.resolve_command(command);
+        let allowed = self.capabilities.can_invoke(command)
+            || registered
+                .as_deref()
+                .is_some_and(|c| self.capabilities.can_invoke(c));
+        if !allowed {
             return Err(format!(
-                "module `{}` is not allowed to invoke host command `{command}` (add it to `capabilities.hostCommands`)",
-                self.module
+                "module `{}` is not allowed to invoke host command `{command}` (add {} to `capabilities.hostCommands`)",
+                self.module,
+                js_string(command),
             ));
         }
-        let args = parse_json_arg(args)?;
-        let out = self.host.invoke(&self.module, command, args)?;
-        serde_json::to_string(&out).map_err(|e| e.to_string())
+        registered.ok_or_else(|| {
+            let callable: Vec<String> = self
+                .host
+                .command_names()
+                .into_iter()
+                .filter(|c| self.capabilities.can_invoke(c))
+                .collect();
+            if callable.is_empty() {
+                format!("unknown host command `{command}` (no host command registered with `host_command` matches it)")
+            } else {
+                format!(
+                    "unknown host command `{command}` (this module may call: {})",
+                    callable.join(", ")
+                )
+            }
+        })
     }
 }
 
@@ -75,8 +122,15 @@ pub(crate) trait ModuleInstance: Send {
     fn call(&mut self, command: &str, args: Value) -> Result<Value>;
     /// Deliver an event. A module without an event handler ignores it.
     fn on_event(&mut self, event: &str, payload: &Value) -> Result<()>;
+    /// Whether the module exports an event handler.
+    fn handles_events(&self) -> bool;
     /// Commands exported by the module.
     fn commands(&self) -> Vec<CommandInfo>;
+    /// Host commands the module imports as typed functions (checked when it
+    /// loads), named as registered.
+    fn imports(&self) -> Vec<CommandInfo> {
+        Vec::new()
+    }
     /// TypeScript declarations for the module's commands, if the engine has
     /// type information.
     fn typescript(&self, _module: &str) -> Option<String> {
@@ -109,7 +163,6 @@ pub struct ParamInfo {
 }
 
 /// A JavaScript string literal (JSON strings are valid JS).
-#[allow(dead_code)]
 pub(crate) fn js_string(s: &str) -> String {
     serde_json::Value::String(s.to_string()).to_string()
 }

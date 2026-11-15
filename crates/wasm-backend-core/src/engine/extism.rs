@@ -151,6 +151,12 @@ impl ModuleInstance for ExtismInstance {
         self.call_raw(handler, &input).map(|_| ())
     }
 
+    fn handles_events(&self) -> bool {
+        EVENT_HANDLERS
+            .iter()
+            .any(|f| self.plugin.function_exists(f))
+    }
+
     fn commands(&self) -> Vec<CommandInfo> {
         self.exports
             .iter()
