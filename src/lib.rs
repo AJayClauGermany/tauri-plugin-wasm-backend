@@ -11,6 +11,12 @@
 //!   the component model yet. Exported functions are commands taking and
 //!   returning JSON.
 //!
+//! The engines, capabilities, registry and hot reload live in the
+//! framework-agnostic [`wasm_backend_core`] crate (re-exported here), so the
+//! same modules can also be hosted by other Rust apps (e.g. GPUI). This
+//! crate adds the Tauri glue: the plugin, IPC commands, permissions and the
+//! [`TauriPlatform`].
+//!
 //! ```no_run
 //! use tauri_plugin_wasm_backend::{Builder, Capabilities, ModuleConfig};
 //!
@@ -35,32 +41,24 @@
 //! // tauri::Builder::default().plugin(plugin)
 //! ```
 
-// Without any engine, modules can't be instantiated and the host plumbing is unused.
-#![cfg_attr(not(any(feature = "component", feature = "extism")), allow(dead_code))]
-
-use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, fmt::Display, path::PathBuf};
 
 use serde::{Serialize, de::DeserializeOwned};
-use tauri::{Manager, Runtime, Wry, path::BaseDirectory, plugin::TauriPlugin};
+use tauri::{Manager, Runtime, Wry, plugin::TauriPlugin};
+use wasm_backend_core::{Backend, HostCall, HostCommandFn, TypeScriptOptions};
 
 mod backend;
-mod capabilities;
 mod commands;
-mod config;
-mod engine;
 mod error;
-#[cfg(feature = "hot-reload")]
-mod watcher;
 
-pub use backend::{
-    EVENT_MODULE_ERROR, EVENT_MODULE_LOADED, EVENT_MODULE_RELOADED, EVENT_MODULE_UNLOADED,
-    HostCallContext, ModuleError, ModuleInfo, WasmBackend,
-};
-pub use capabilities::{Capabilities, EventCapabilities, Preopen, WasiCapabilities};
+pub use backend::{HostCallContext, TauriPlatform, WasmBackend};
 pub use commands::InvokeScope;
-pub use config::{Config, EngineKind, ExternalConfig, ModuleConfig};
-pub use engine::{CommandInfo, ParamInfo};
 pub use error::{Error, Result};
+pub use wasm_backend_core::{
+    self, Capabilities, CommandInfo, Config, EVENT_MODULE_ERROR, EVENT_MODULE_LOADED,
+    EVENT_MODULE_RELOADED, EVENT_MODULE_UNLOADED, EngineKind, EventCapabilities, ExternalConfig,
+    ModuleConfig, ModuleError, ModuleInfo, ParamInfo, Preopen, WasiCapabilities,
+};
 
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`] and [`tauri::Window`]
 /// to access the WASM backend.
@@ -79,7 +77,7 @@ impl<R: Runtime, T: Manager<R>> WasmBackendExt<R> for T {
 /// registered here win on name conflicts).
 pub struct Builder<R: Runtime = Wry> {
     config: Config,
-    host_commands: HashMap<String, backend::HostCommandFn<R>>,
+    host_commands: HashMap<String, HostCommandFn<TauriPlatform<R>>>,
     typescript_out_dir: Option<PathBuf>,
 }
 
@@ -137,16 +135,19 @@ impl<R: Runtime> Builder<R> {
         F: Fn(HostCallContext<R>, A) -> std::result::Result<T, E> + Send + Sync + 'static,
     {
         let name = name.into();
-        let command = name.clone();
-        self.host_commands.insert(
-            name,
-            Arc::new(move |ctx, args| {
-                let args = serde_json::from_value(args)
-                    .map_err(|e| format!("invalid arguments for host command `{command}`: {e}"))?;
-                let out = f(ctx, args).map_err(|e| e.to_string())?;
-                serde_json::to_value(out).map_err(|e| e.to_string())
-            }),
+        let f = wasm_backend_core::host_command_fn(
+            name.clone(),
+            move |call: HostCall<'_, TauriPlatform<R>>, args: A| {
+                f(
+                    HostCallContext {
+                        app: call.platform.app().clone(),
+                        module: call.module.to_string(),
+                    },
+                    args,
+                )
+            },
         );
+        self.host_commands.insert(name, f);
         self
     }
 
@@ -179,42 +180,29 @@ impl<R: Runtime> Builder<R> {
                     );
                 }
 
-                let external = match &config.external {
-                    Some(ext) => {
-                        let dir = backend::resolve_dir(app, &ext.dir, BaseDirectory::AppData)?;
-                        // Create it before the watcher starts so it can be watched.
-                        std::fs::create_dir_all(&dir)?;
-                        Some(backend::External {
-                            dir,
-                            config: ext.clone(),
-                        })
-                    }
-                    None => None,
-                };
                 let typescript_dir = typescript_out_dir
                     .or(config.typescript_out_dir.clone())
                     .filter(|_| cfg!(debug_assertions))
                     .map(|d| std::env::current_dir().map(|c| c.join(d)))
                     .transpose()?;
-                let backend = WasmBackend::new(
-                    app.clone(),
-                    host_commands,
-                    hot_reload,
-                    external,
-                    typescript_dir,
-                );
-                app.manage(backend.clone());
-
-                for (name, module) in config.modules {
-                    // A broken module shouldn't take the app down; it can be
-                    // fixed and hot reloaded.
-                    if let Err(e) = backend.load(&name, module) {
-                        backend.report_error(&name, &e);
-                    }
+                let mut core = Backend::builder(TauriPlatform::new(app.clone()))
+                    // Decide dev vs release paths with this crate's profile, as before.
+                    .dev(cfg!(debug_assertions))
+                    .hot_reload(hot_reload)
+                    .external(config.external.clone())
+                    .typescript_out_dir(typescript_dir)
+                    .typescript_options(TypeScriptOptions {
+                        generator: "tauri-plugin-wasm-backend".into(),
+                        api_module: "tauri-plugin-wasm-backend-api".into(),
+                    });
+                for (name, f) in host_commands {
+                    core = core.host_command_fn(name, f);
                 }
-                backend.sync_external();
-                #[cfg(feature = "hot-reload")]
-                watcher::sync(&backend);
+                let backend = WasmBackend(core.build()?);
+                // Managed before modules load so host commands and event
+                // handlers they trigger can reach it.
+                app.manage(backend.clone());
+                backend.core().load_all(config.modules);
                 Ok(())
             })
             .build()
@@ -224,4 +212,18 @@ impl<R: Runtime> Builder<R> {
 /// Initializes the plugin with the configuration from `tauri.conf.json`.
 pub fn init<R: Runtime>() -> TauriPlugin<R, Option<Config>> {
     Builder::new().build()
+}
+
+#[cfg(test)]
+mod tests {
+    /// The WIT package shipped to guests (repository root, npm package) must
+    /// match the one the engine is compiled against.
+    #[test]
+    fn wit_in_sync() {
+        assert_eq!(
+            include_str!("../wit/backend.wit"),
+            wasm_backend_core::WIT,
+            "wit/backend.wit and crates/wasm-backend-core/wit/backend.wit differ"
+        );
+    }
 }

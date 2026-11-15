@@ -26,7 +26,8 @@ use wasmtime::{
 };
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
-use super::{CommandInfo, ModuleHost, ModuleInstance, ParamInfo, js_string, naming};
+use super::{CommandInfo, ModuleHost, ModuleInstance, ParamInfo, js_string};
+use crate::naming;
 use crate::{Error, Result};
 
 mod bindings {

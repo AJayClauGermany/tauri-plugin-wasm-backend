@@ -74,8 +74,9 @@ pub struct WasiCapabilities {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Preopen {
     /// Host directory. May start with `$APPDATA`, `$APPLOCALDATA`,
-    /// `$APPCACHE`, `$APPCONFIG`, `$RESOURCE` or `$TEMP`; other relative
-    /// paths are resolved against the app data directory. Writable
+    /// `$APPCACHE`, `$APPCONFIG`, `$RESOURCE` or `$TEMP` (resolved by the
+    /// [`Platform`](crate::Platform)); other relative paths are resolved
+    /// against the app data directory. Writable
     /// directories are created if missing.
     pub host: PathBuf,
     /// Path the directory is visible under inside the module.
@@ -129,7 +130,7 @@ pub(crate) fn any_match(patterns: &[String], value: &str) -> bool {
 }
 
 /// Glob-like matching where `*` matches any (possibly empty) sequence.
-pub(crate) fn wildcard_match(pattern: &str, value: &str) -> bool {
+pub fn wildcard_match(pattern: &str, value: &str) -> bool {
     let p = pattern.as_bytes();
     let v = value.as_bytes();
     let (mut pi, mut vi) = (0, 0);

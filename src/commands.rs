@@ -5,9 +5,9 @@ use tauri::{
     ipc::{CommandScope, GlobalScope},
 };
 
-use crate::{
-    Error, ModuleInfo, Result, WasmBackendExt, capabilities::wildcard_match, engine::naming,
-};
+use wasm_backend_core::{naming, wildcard_match};
+
+use crate::{Error, ModuleInfo, Result, WasmBackendExt};
 
 /// Scope entry of the `invoke` command, used in capability files to restrict
 /// which modules and commands the frontend may call:
@@ -81,7 +81,7 @@ pub(crate) async fn invoke<R: Runtime>(
     if !check_scope(
         &allows,
         &denies,
-        backend.is_exposed(&module),
+        backend.core().is_exposed(&module),
         &module,
         &command,
     ) {

@@ -25,7 +25,8 @@ use extism::{CurrentPlugin, Function, Manifest, PTR, PluginBuilder, UserData, Va
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{CommandInfo, ModuleHost, ModuleInstance, naming};
+use super::{CommandInfo, ModuleHost, ModuleInstance};
+use crate::naming;
 use crate::{Error, Result};
 
 const EVENT_HANDLERS: &[&str] = &["on_event", "onEvent"];

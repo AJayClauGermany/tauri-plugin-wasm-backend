@@ -1,5 +1,6 @@
-//! Plugin configuration, read from `plugins.wasm-backend` in `tauri.conf.json`
-//! and/or set programmatically through [`crate::Builder`].
+//! Backend configuration. With Tauri it is read from `plugins.wasm-backend`
+//! in `tauri.conf.json` and/or set through the plugin's `Builder`; other
+//! integrations can deserialize it from any format or build it in code.
 
 use std::{
     collections::BTreeMap,
@@ -26,7 +27,7 @@ pub enum EngineKind {
     Extism,
 }
 
-/// Configuration of the whole plugin.
+/// Configuration of the whole backend.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Config {
@@ -42,7 +43,8 @@ pub struct Config {
     pub hot_reload: Option<bool>,
     /// In debug builds, write TypeScript bindings for every module to
     /// `<dir>/<module>.ts` on (re)load. Relative to the current directory
-    /// (`src-tauri` under `tauri dev`).
+    /// (`src-tauri` under `tauri dev`). Applied by the Tauri plugin; other
+    /// integrations use [`BackendBuilder::typescript_out_dir`](crate::BackendBuilder::typescript_out_dir).
     #[serde(default)]
     pub typescript_out_dir: Option<PathBuf>,
 }
@@ -52,8 +54,9 @@ pub struct Config {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ModuleConfig {
     /// Path of the `.wasm` file. Relative paths are resolved against the
-    /// app's resource directory in release builds and against the current
-    /// directory (`src-tauri` under `tauri dev`) in debug builds.
+    /// app's resource directory ([`BaseDir::Resource`](crate::BaseDir)) in
+    /// release builds and against the current directory (`src-tauri` under
+    /// `tauri dev`) in debug builds.
     #[serde(default)]
     pub path: Option<PathBuf>,
     /// Path used instead of `path` in debug builds.
@@ -65,7 +68,7 @@ pub struct ModuleConfig {
     #[serde(default)]
     pub capabilities: Capabilities,
     /// Whether the frontend may invoke this module when the `invoke` command
-    /// is allowed without an explicit scope. Defaults to `true` for app
+    /// is allowed without an explicit scope (see [`ModuleInfo::exposed`](crate::ModuleInfo::exposed)). Defaults to `true` for app
     /// modules and `false` for external plugins.
     #[serde(default)]
     pub expose: Option<bool>,
@@ -122,9 +125,10 @@ impl ModuleConfig {
         self
     }
 
-    /// The configured path for the current build profile, unresolved.
-    pub(crate) fn configured_path(&self) -> Option<&Path> {
-        if cfg!(debug_assertions) {
+    /// The configured path, unresolved: `dev_path` (falling back to `path`)
+    /// in development, `path` otherwise.
+    pub fn configured_path(&self, dev: bool) -> Option<&Path> {
+        if dev {
             self.dev_path.as_deref().or(self.path.as_deref())
         } else {
             self.path.as_deref()
