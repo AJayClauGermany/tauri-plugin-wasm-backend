@@ -403,6 +403,10 @@ backend.load_all([("greeter".into(), ModuleConfig::from_path("greeter.wasm"))]);
 let out = backend.invoke("greeter", "greet", serde_json::json!({ "name": "GPUI" }))?;
 ```
 
+`Backend::invoke_async` runs the call through `Platform::spawn_blocking` and
+returns a plain future, so it works with any async runtime (tokio, smol,
+GPUI's executors). The core itself is synchronous and doesn't depend on one.
+
 See the crate docs for a complete `Platform` implementation. The guest API
 (the `tauri:backend` WIT package and the `tauri_*` Extism host functions) is
 identical on every platform, so a module built for a Tauri app runs

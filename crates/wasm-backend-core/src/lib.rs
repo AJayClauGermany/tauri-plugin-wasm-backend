@@ -86,6 +86,7 @@ mod error;
 pub mod naming;
 mod platform;
 mod registry;
+mod task;
 #[cfg(feature = "hot-reload")]
 mod watcher;
 

@@ -90,9 +90,12 @@ pub trait Platform: Send + Sync + 'static {
         Ok(self.base_dir(base)?.join(path))
     }
 
-    /// Run blocking work (a WASM call) off the current thread. Event
-    /// handlers never run WASM inline because the emitter may be the module
-    /// itself. Defaults to a new OS thread.
+    /// Run blocking work (a WASM call) off the current thread: event
+    /// handlers (WASM never runs inline, as the emitter may be the module
+    /// itself) and [`Backend::invoke_async`](crate::Backend::invoke_async).
+    /// Defaults to a new OS thread; point it at your runtime's blocking pool
+    /// (e.g. `tokio::task::spawn_blocking`) if you have one. If a task is
+    /// dropped without running, the call waiting for it fails.
     fn spawn_blocking(&self, task: Box<dyn FnOnce() + Send + 'static>) {
         std::thread::spawn(task);
     }

@@ -99,13 +99,9 @@ impl<R: Runtime> WasmBackend<R> {
         self.0.invoke(module, command, args)
     }
 
-    /// [`WasmBackend::invoke`] on a blocking thread.
+    /// [`WasmBackend::invoke`] on a blocking thread of Tauri's async runtime.
     pub async fn invoke_async(&self, module: &str, command: &str, args: Value) -> Result<Value> {
-        let this = self.clone();
-        let (module, command) = (module.to_string(), command.to_string());
-        tauri::async_runtime::spawn_blocking(move || this.invoke(&module, &command, args))
-            .await
-            .map_err(|e| Error::Runtime(e.to_string()))?
+        self.0.invoke_async(module, command, args).await
     }
 
     /// Typed variant of [`WasmBackend::invoke`].

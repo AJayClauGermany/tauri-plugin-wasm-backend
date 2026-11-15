@@ -86,6 +86,26 @@ impl Platform for TestPlatform {
     }
 }
 
+/// Minimal executor: the core's futures don't need a specific runtime.
+fn block_on<F: std::future::Future>(f: F) -> F::Output {
+    use std::task::{Context, Poll, Wake, Waker};
+    struct ThreadWaker(std::thread::Thread);
+    impl Wake for ThreadWaker {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let waker = Waker::from(Arc::new(ThreadWaker(std::thread::current())));
+    let mut cx = Context::from_waker(&waker);
+    let mut f = std::pin::pin!(f);
+    loop {
+        if let Poll::Ready(v) = f.as_mut().poll(&mut cx) {
+            return v;
+        }
+        std::thread::park();
+    }
+}
+
 fn backend() -> (TestPlatform, Backend<TestPlatform>) {
     let platform = TestPlatform::default();
     let backend = Backend::builder(platform.clone())
@@ -147,6 +167,16 @@ fn extism_without_tauri() {
         b.invoke("ext", "greet", json!({ "name": "GPUI" })).unwrap(),
         json!("Hello, GPUI!")
     );
+
+    // Async invokes run on the platform's blocking threads.
+    assert_eq!(
+        block_on(b.invoke_async("ext", "greet", json!({ "name": "async" }))).unwrap(),
+        json!("Hello, async!")
+    );
+    assert!(matches!(
+        block_on(b.invoke_async("nope", "greet", Value::Null)),
+        Err(wasm_backend_core::Error::ModuleNotFound(_))
+    ));
 
     // Events go through the platform.
     let (tx, rx) = mpsc::channel();

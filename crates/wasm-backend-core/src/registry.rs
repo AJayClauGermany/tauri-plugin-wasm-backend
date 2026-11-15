@@ -409,12 +409,29 @@ impl<P: Platform> Backend<P> {
     /// object keyed by parameter name for WIT modules; Extism modules receive
     /// it as their JSON input.
     ///
-    /// This runs WASM on the calling thread; from async code, run it on a
-    /// blocking thread (the Tauri plugin's `invoke_async` does).
+    /// This runs WASM on the calling thread; from async code, prefer
+    /// [`Backend::invoke_async`].
     pub fn invoke(&self, module: &str, command: &str, args: Value) -> Result<Value> {
         let m = self.get(module)?;
         let _guard = CallGuard::enter(module)?;
         m.instance().call(command, args)
+    }
+
+    /// [`Backend::invoke`] on a blocking thread, via
+    /// [`Platform::spawn_blocking`]. The future works with any async runtime
+    /// (tokio, smol, GPUI's executors, ...).
+    pub async fn invoke_async(&self, module: &str, command: &str, args: Value) -> Result<Value> {
+        let this = self.clone();
+        let (module, command) = (module.to_string(), command.to_string());
+        crate::task::run_blocking(&self.0.platform, move || {
+            this.invoke(&module, &command, args)
+        })
+        .await
+        .unwrap_or_else(|| {
+            Err(Error::Runtime(
+                "the call panicked or the platform dropped it before it ran".into(),
+            ))
+        })
     }
 
     /// Typed variant of [`Backend::invoke`].
