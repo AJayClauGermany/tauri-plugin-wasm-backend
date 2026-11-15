@@ -1,7 +1,9 @@
 // A backend module written in plain JavaScript, compiled to a WebAssembly
 // component. Edit this file while `pnpm tauri dev` runs: it is rebuilt and
 // hot reloaded without recompiling the Rust app.
-import { log, emit, invoke } from 'tauri:backend/host@0.1.0';
+import { log, emit } from 'tauri:backend/host@0.1.0';
+// Host commands imported in wit/world.wit: typed, no JSON strings.
+import { appVersion } from 'example:greeter/app';
 
 let count = 0;
 
@@ -16,8 +18,8 @@ export function greet(name) {
 // frontend's promise, like a Rust command returning `Err`.
 export function describe(person) {
   if (!person.name) throw 'a person needs a name';
-  // Host commands are registered in Rust with `Builder::host_command`.
-  const version = JSON.parse(invoke('app_version', 'null'));
+  // A host command registered in Rust with `Builder::host_command`.
+  const version = appVersion();
   return `${person.name} is ${person.ageYears} years old (app v${version})`;
 }
 

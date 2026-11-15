@@ -1,5 +1,14 @@
 package example:greeter;
 
+/// Host commands this module calls, registered in Rust with
+/// `Builder::host_command`. Importing them makes them typed functions
+/// (`import { appVersion } from 'example:greeter/app'`), and the app checks
+/// when the module loads that each one is registered and allowed by
+/// `capabilities.hostCommands`.
+interface app {
+  app-version: func() -> string;
+}
+
 /// A backend module written in JavaScript.
 ///
 /// Exported functions are commands the frontend can invoke, just like Rust
@@ -7,6 +16,7 @@ package example:greeter;
 world greeter {
   /// Host API (log, emit, invoke) and the `on-event` export.
   include tauri:backend/module-with-events@0.1.0;
+  import app;
 
   record person {
     name: string,
