@@ -23,7 +23,7 @@
 use serde_json::{Map, Number, Value};
 use wasmtime::component::{Type, Val};
 
-use crate::engine::naming::{candidates, to_camel, to_kebab};
+use crate::naming::{candidates, to_camel, to_kebab};
 
 pub(crate) fn json_to_val(value: &Value, ty: &Type) -> Result<Val, String> {
     fn int<T: TryFrom<i64> + TryFrom<u64>>(v: &Value, name: &str) -> Result<T, String> {

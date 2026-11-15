@@ -379,6 +379,38 @@ pnpm copies `file:` dependencies when it installs them, so run
 (after the first build, or after changing `guest-js/`). If the import still
 fails, delete `examples/tauri-app/node_modules` and reinstall.
 
+## Using the core outside Tauri
+
+The engines, capabilities, module registry and hot reload live in the
+framework-agnostic [`wasm-backend-core`](crates/wasm-backend-core) crate. The
+Tauri plugin is a thin layer on top of it (the plugin, IPC commands,
+permissions and `TauriPlatform`) and re-exports its types, so Tauri apps
+don't need to depend on it directly.
+
+Other Rust apps (GPUI and its derivatives, CLIs, servers, tests) can host
+the same modules by implementing the `Platform` trait: how events are
+delivered, where the standard directories (`$APPDATA`, `$RESOURCE`, …) are,
+and where blocking work runs. Apps without an event system can delegate to
+the bundled `EventBus`.
+
+```rust
+use wasm_backend_core::{Backend, ModuleConfig};
+
+let backend = Backend::builder(MyPlatform::new())
+    .host_command("now", |_call, _args: ()| Ok::<_, String>(42))
+    .build()?;
+backend.load_all([("greeter".into(), ModuleConfig::from_path("greeter.wasm"))]);
+let out = backend.invoke("greeter", "greet", serde_json::json!({ "name": "GPUI" }))?;
+```
+
+See the crate docs for a complete `Platform` implementation. The guest API
+(the `tauri:backend` WIT package and the `tauri_*` Extism host functions) is
+identical on every platform, so a module built for a Tauri app runs
+unchanged elsewhere. Frontend access control (the `invoke` scopes) is a Tauri
+concept and stays in the plugin; other integrations decide themselves who
+may call `Backend::invoke` (`ModuleInfo::exposed` carries the module's
+setting).
+
 ## Platform notes
 
 Wasmtime and Extism compile WASM to native code at runtime, which works on

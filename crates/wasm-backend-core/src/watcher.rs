@@ -11,10 +11,8 @@ use std::{
     time::Duration,
 };
 
+use crate::{platform::Platform, registry::Backend};
 use notify::{RecursiveMode, Watcher as _};
-use tauri::Runtime;
-
-use crate::backend::WasmBackend;
 
 /// Changes within this window are handled together.
 const DEBOUNCE: Duration = Duration::from_millis(150);
@@ -36,7 +34,7 @@ pub(crate) fn normalize(path: &Path) -> PathBuf {
 }
 
 /// Make the watcher match the current set of watched modules.
-pub(crate) fn sync<R: Runtime>(backend: &WasmBackend<R>) {
+pub(crate) fn sync<P: Platform>(backend: &Backend<P>) {
     let mut dirs = BTreeSet::new();
     for module in backend.read_modules().values() {
         if let (true, Some(path)) = (module.watched(), module.path())
@@ -121,7 +119,7 @@ pub(crate) fn sync<R: Runtime>(backend: &WasmBackend<R>) {
                     }
                 }
                 let Some(inner) = weak.upgrade() else { return };
-                handle_changes(&WasmBackend(inner), &changed);
+                handle_changes(&Backend(inner), &changed);
                 if disconnected {
                     return;
                 }
@@ -135,7 +133,7 @@ pub(crate) fn sync<R: Runtime>(backend: &WasmBackend<R>) {
     });
 }
 
-fn handle_changes<R: Runtime>(backend: &WasmBackend<R>, changed: &HashSet<PathBuf>) {
+fn handle_changes<P: Platform>(backend: &Backend<P>, changed: &HashSet<PathBuf>) {
     let modules: Vec<_> = backend.read_modules().values().cloned().collect();
     for module in modules {
         let Some(path) = module.path() else { continue };

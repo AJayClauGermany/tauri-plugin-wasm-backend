@@ -1,5 +1,6 @@
 //! Name conversions between WIT (kebab-case), Rust/Tauri (snake_case) and
-//! JavaScript (camelCase) conventions.
+//! JavaScript (camelCase) conventions. Exposed so integrations can match
+//! command names the same way the engines do.
 
 /// Split an identifier written in any of the supported conventions into
 /// lowercase words.
@@ -30,15 +31,15 @@ fn words(name: &str) -> Vec<String> {
     words
 }
 
-pub(crate) fn to_kebab(name: &str) -> String {
+pub fn to_kebab(name: &str) -> String {
     words(name).join("-")
 }
 
-pub(crate) fn to_snake(name: &str) -> String {
+pub fn to_snake(name: &str) -> String {
     words(name).join("_")
 }
 
-pub(crate) fn to_camel(name: &str) -> String {
+pub fn to_camel(name: &str) -> String {
     let mut out = String::new();
     for (i, w) in words(name).into_iter().enumerate() {
         if i == 0 {
@@ -55,7 +56,7 @@ pub(crate) fn to_camel(name: &str) -> String {
 }
 
 /// Names to try, in order, when looking up `name`.
-pub(crate) fn candidates(name: &str) -> Vec<String> {
+pub fn candidates(name: &str) -> Vec<String> {
     let mut out = vec![name.to_string()];
     for c in [to_kebab(name), to_snake(name), to_camel(name)] {
         if !out.contains(&c) {

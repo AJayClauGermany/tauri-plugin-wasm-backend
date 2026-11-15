@@ -6,8 +6,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// An error reported by the [`Platform`](crate::Platform) (e.g. a
+    /// `tauri::Error` when resolving a directory).
     #[error(transparent)]
-    Tauri(#[from] tauri::Error),
+    Platform(Box<dyn std::error::Error + Send + Sync>),
     #[error("WASM module `{0}` is not loaded")]
     ModuleNotFound(String),
     #[error("WASM module `{module}` has no command `{command}`")]
@@ -32,9 +34,16 @@ pub enum Error {
     )]
     Reentrant(String),
     #[error(
-        "the `{0}` engine is not enabled; enable the `{0}` cargo feature of tauri-plugin-wasm-backend"
+        "the `{0}` engine is not enabled; enable the `{0}` cargo feature of tauri-plugin-wasm-backend (or wasm-backend-core)"
     )]
     EngineDisabled(&'static str),
+}
+
+impl Error {
+    /// Wrap an error coming from the platform integration.
+    pub fn platform(error: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> Self {
+        Self::Platform(error.into())
+    }
 }
 
 fn display_value(v: &serde_json::Value) -> String {

@@ -1,4 +1,4 @@
-//! Runtime-agnostic glue between the module registry and the WASM engines.
+//! Glue between the module registry and the WASM engines.
 
 use std::sync::Arc;
 
@@ -11,9 +11,8 @@ use crate::{Result, capabilities::Capabilities, config::EngineKind};
 pub(crate) mod component;
 #[cfg(feature = "extism")]
 pub(crate) mod extism;
-pub(crate) mod naming;
 
-/// Type-erased access to the Tauri app, implemented by the registry.
+/// Type-erased access to the host app, implemented by the registry.
 pub(crate) trait Host: Send + Sync {
     fn emit(&self, event: &str, payload: Value) -> std::result::Result<(), String>;
     fn invoke(
