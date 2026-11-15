@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, EventId, Listener, Manager, Runtime, path::BaseDirectory};
-use wasm_backend_core::{
-    Backend, BaseDir, Error, EventHandler, ModuleConfig, ModuleInfo, Platform, Result,
-};
+use wasm_backend_core::{Backend, BaseDir, EventHandler, ModuleConfig, ModuleInfo, Platform};
+
+use crate::{Error, Result};
 
 /// Runs the registry on top of a Tauri app: module events are Tauri events,
 /// `$APPDATA`-style paths use Tauri's path resolver and blocking work runs
@@ -44,11 +44,11 @@ impl<R: Runtime> Platform for TauriPlatform<R> {
         self.app.unlisten(id);
     }
 
-    fn base_dir(&self, base: BaseDir) -> Result<PathBuf> {
+    fn base_dir(&self, base: BaseDir) -> wasm_backend_core::Result<PathBuf> {
         self.resolve(Path::new(""), base)
     }
 
-    fn resolve(&self, path: &Path, base: BaseDir) -> Result<PathBuf> {
+    fn resolve(&self, path: &Path, base: BaseDir) -> wasm_backend_core::Result<PathBuf> {
         let base = match base {
             BaseDir::AppData => BaseDirectory::AppData,
             BaseDir::AppLocalData => BaseDirectory::AppLocalData,
@@ -57,7 +57,10 @@ impl<R: Runtime> Platform for TauriPlatform<R> {
             BaseDir::Resource => BaseDirectory::Resource,
             BaseDir::Temp => BaseDirectory::Temp,
         };
-        self.app.path().resolve(path, base).map_err(Error::platform)
+        self.app
+            .path()
+            .resolve(path, base)
+            .map_err(wasm_backend_core::Error::platform)
     }
 
     fn spawn_blocking(&self, task: Box<dyn FnOnce() + Send + 'static>) {
@@ -96,12 +99,16 @@ impl<R: Runtime> WasmBackend<R> {
     /// This runs WASM on the calling thread; from async code, prefer
     /// [`WasmBackend::invoke_async`].
     pub fn invoke(&self, module: &str, command: &str, args: Value) -> Result<Value> {
-        self.0.invoke(module, command, args)
+        Ok(self.0.invoke(module, command, args)?)
     }
 
-    /// [`WasmBackend::invoke`] on a blocking thread of Tauri's async runtime.
+    /// [`WasmBackend::invoke`] on a blocking thread.
     pub async fn invoke_async(&self, module: &str, command: &str, args: Value) -> Result<Value> {
-        self.0.invoke_async(module, command, args).await
+        let this = self.clone();
+        let (module, command) = (module.to_string(), command.to_string());
+        tauri::async_runtime::spawn_blocking(move || this.invoke(&module, &command, args))
+            .await
+            .map_err(|e| Error::Runtime(e.to_string()))?
     }
 
     /// Typed variant of [`WasmBackend::invoke`].
@@ -111,13 +118,13 @@ impl<R: Runtime> WasmBackend<R> {
         command: &str,
         args: A,
     ) -> Result<T> {
-        self.0.call(module, command, args)
+        Ok(self.0.call(module, command, args)?)
     }
 
     /// Deliver an event directly to a module's event handler, regardless of
     /// its `events.listen` subscriptions.
     pub fn send_event(&self, module: &str, event: &str, payload: &Value) -> Result<()> {
-        self.0.send_event(module, event, payload)
+        Ok(self.0.send_event(module, event, payload)?)
     }
 
     /// Information about every loaded module.
@@ -127,30 +134,30 @@ impl<R: Runtime> WasmBackend<R> {
 
     /// Information about one module.
     pub fn module(&self, name: &str) -> Result<ModuleInfo> {
-        self.0.module(name)
+        Ok(self.0.module(name)?)
     }
 
     /// TypeScript bindings for a module's commands, built from the types
     /// the module exports. See the README for how to use them.
     pub fn typescript(&self, name: &str) -> Result<String> {
-        self.0.typescript(name)
+        Ok(self.0.typescript(name)?)
     }
 
     /// Load (or replace) a module at runtime. Use this to manage plugins
     /// yourself, e.g. after the user picked a file and granted permissions.
     pub fn load(&self, name: &str, config: ModuleConfig) -> Result<ModuleInfo> {
-        self.0.load(name, config)
+        Ok(self.0.load(name, config)?)
     }
 
     /// Unload a module.
     pub fn unload(&self, name: &str) -> Result<()> {
-        self.0.unload(name)
+        Ok(self.0.unload(name)?)
     }
 
     /// Reload a module from its file, even if the file is unchanged (which
     /// resets the module's state).
     pub fn reload(&self, name: &str) -> Result<ModuleInfo> {
-        self.0.reload(name)
+        Ok(self.0.reload(name)?)
     }
 
     /// Load new plugins from the external plugins directory and unload the

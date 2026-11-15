@@ -40,8 +40,8 @@ impl<T> Drop for Sender<T> {
     }
 }
 
-/// The result of [`run_blocking`]: `None` if the task panicked or the
-/// platform dropped it without running it.
+/// The result of [`run_blocking`]: `Err` with the panic message if the task
+/// panicked, `None` if the platform dropped it without running it.
 pub(crate) struct BlockingTask<T>(Arc<Mutex<Shared<T>>>);
 
 impl<T> Future for BlockingTask<T> {
@@ -60,7 +60,10 @@ impl<T> Future for BlockingTask<T> {
     }
 }
 
-pub(crate) fn run_blocking<P, T, F>(platform: &P, f: F) -> BlockingTask<T>
+pub(crate) fn run_blocking<P, T, F>(
+    platform: &P,
+    f: F,
+) -> BlockingTask<std::result::Result<T, String>>
 where
     P: Platform + ?Sized,
     T: Send + 'static,
@@ -72,8 +75,22 @@ where
         waker: None,
     }));
     let sender = Sender(shared.clone());
-    platform.spawn_blocking(Box::new(move || sender.send(f())));
+    platform.spawn_blocking(Box::new(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+            .map_err(|payload| panic_message(payload.as_ref()));
+        sender.send(result)
+    }));
     BlockingTask(shared)
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic payload".into()
+    }
 }
 
 #[cfg(test)]
@@ -138,13 +155,13 @@ pub(crate) mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
             tx.send(()).unwrap();
         });
-        assert_eq!(block_on(task), Some(42));
+        assert_eq!(block_on(task), Some(Ok(42)));
     }
 
     #[test]
     fn panics_and_dropped_tasks_resolve() {
         let task = run_blocking(&Threads { run: true }, || -> u32 { panic!("boom") });
-        assert_eq!(block_on(task), None);
+        assert_eq!(block_on(task), Some(Err("boom".to_string())));
         let task = run_blocking(&Threads { run: false }, || 1);
         assert_eq!(block_on(task), None);
     }

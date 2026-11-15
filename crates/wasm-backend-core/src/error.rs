@@ -33,9 +33,7 @@ pub enum Error {
         "reentrant call into WASM module `{0}` (a host command called back into the module that invoked it)"
     )]
     Reentrant(String),
-    #[error(
-        "the `{0}` engine is not enabled; enable the `{0}` cargo feature of tauri-plugin-wasm-backend (or wasm-backend-core)"
-    )]
+    #[error("the `{0}` engine is not enabled; enable the `{0}` cargo feature of wasm-backend-core")]
     EngineDisabled(&'static str),
 }
 

@@ -154,6 +154,7 @@ pub(crate) struct Inner<P: Platform> {
     modules: RwLock<BTreeMap<String, Arc<Module<P>>>>,
     host_commands: HashMap<String, HostCommandFn<P>>,
     pub(crate) hot_reload: bool,
+    dev: bool,
     pub(crate) external: Option<External>,
     typescript_dir: Option<PathBuf>,
     typescript: TypeScriptOptions,
@@ -291,6 +292,7 @@ pub struct BackendBuilder<P: Platform> {
     platform: P,
     host_commands: HashMap<String, HostCommandFn<P>>,
     hot_reload: bool,
+    dev: bool,
     external: Option<ExternalConfig>,
     typescript_dir: Option<PathBuf>,
     typescript: TypeScriptOptions,
@@ -322,6 +324,14 @@ impl<P: Platform> BackendBuilder<P> {
     /// debug builds). Needs the `hot-reload` feature.
     pub fn hot_reload(mut self, enabled: bool) -> Self {
         self.hot_reload = enabled;
+        self
+    }
+
+    /// Development mode (default: debug builds): modules load from
+    /// `dev_path` when set, and relative module paths resolve against the
+    /// current directory instead of [`BaseDir::Resource`].
+    pub fn dev(mut self, enabled: bool) -> Self {
+        self.dev = enabled;
         self
     }
 
@@ -363,6 +373,7 @@ impl<P: Platform> BackendBuilder<P> {
             modules: RwLock::new(BTreeMap::new()),
             host_commands: self.host_commands,
             hot_reload: self.hot_reload,
+            dev: self.dev,
             external,
             typescript_dir: self.typescript_dir,
             typescript: self.typescript,
@@ -379,6 +390,7 @@ impl<P: Platform> Backend<P> {
             platform,
             host_commands: HashMap::new(),
             hot_reload: cfg!(debug_assertions),
+            dev: cfg!(debug_assertions),
             external: None,
             typescript_dir: None,
             typescript: TypeScriptOptions::default(),
@@ -423,15 +435,17 @@ impl<P: Platform> Backend<P> {
     pub async fn invoke_async(&self, module: &str, command: &str, args: Value) -> Result<Value> {
         let this = self.clone();
         let (module, command) = (module.to_string(), command.to_string());
-        crate::task::run_blocking(&self.0.platform, move || {
+        match crate::task::run_blocking(&self.0.platform, move || {
             this.invoke(&module, &command, args)
         })
         .await
-        .unwrap_or_else(|| {
-            Err(Error::Runtime(
-                "the call panicked or the platform dropped it before it ran".into(),
-            ))
-        })
+        {
+            Some(Ok(result)) => result,
+            Some(Err(panic)) => Err(Error::Runtime(format!("the call panicked: {panic}"))),
+            None => Err(Error::Runtime(
+                "the platform dropped the call before it ran".into(),
+            )),
+        }
     }
 
     /// Typed variant of [`Backend::invoke`].
@@ -655,7 +669,7 @@ impl<P: Platform> Backend<P> {
         let retry = (watch && config.bytes.is_none())
             .then(|| {
                 config
-                    .configured_path()
+                    .configured_path(self.0.dev)
                     .map(|p| self.resolve_module_path(p, external))
             })
             .flatten()
@@ -725,7 +739,7 @@ impl<P: Platform> Backend<P> {
             }
         }
         let (bytes, path): (Arc<[u8]>, Option<PathBuf>) =
-            match (&config.bytes, config.configured_path()) {
+            match (&config.bytes, config.configured_path(self.0.dev)) {
                 (Some(bytes), _) => (bytes.clone(), None),
                 (None, Some(path)) => {
                     let path = self.resolve_module_path(path, external)?;
@@ -886,7 +900,7 @@ impl<P: Platform> Backend<P> {
         if path.is_absolute() {
             return Ok(path.to_path_buf());
         }
-        if external || cfg!(debug_assertions) {
+        if external || self.0.dev {
             // External plugin paths are already absolute; dev paths are
             // relative to the working directory (`src-tauri` under `tauri dev`).
             return Ok(std::env::current_dir()?.join(path));

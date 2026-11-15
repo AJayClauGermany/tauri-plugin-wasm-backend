@@ -125,9 +125,10 @@ impl ModuleConfig {
         self
     }
 
-    /// The configured path for the current build profile, unresolved.
-    pub fn configured_path(&self) -> Option<&Path> {
-        if cfg!(debug_assertions) {
+    /// The configured path, unresolved: `dev_path` (falling back to `path`)
+    /// in development, `path` otherwise.
+    pub fn configured_path(&self, dev: bool) -> Option<&Path> {
+        if dev {
             self.dev_path.as_deref().or(self.path.as_deref())
         } else {
             self.path.as_deref()

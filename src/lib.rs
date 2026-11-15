@@ -49,14 +49,15 @@ use wasm_backend_core::{Backend, HostCall, HostCommandFn, TypeScriptOptions};
 
 mod backend;
 mod commands;
+mod error;
 
 pub use backend::{HostCallContext, TauriPlatform, WasmBackend};
 pub use commands::InvokeScope;
+pub use error::{Error, Result};
 pub use wasm_backend_core::{
     self, Capabilities, CommandInfo, Config, EVENT_MODULE_ERROR, EVENT_MODULE_LOADED,
-    EVENT_MODULE_RELOADED, EVENT_MODULE_UNLOADED, EngineKind, Error, EventCapabilities,
-    ExternalConfig, ModuleConfig, ModuleError, ModuleInfo, ParamInfo, Preopen, Result,
-    WasiCapabilities,
+    EVENT_MODULE_RELOADED, EVENT_MODULE_UNLOADED, EngineKind, EventCapabilities, ExternalConfig,
+    ModuleConfig, ModuleError, ModuleInfo, ParamInfo, Preopen, WasiCapabilities,
 };
 
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`] and [`tauri::Window`]
@@ -185,6 +186,8 @@ impl<R: Runtime> Builder<R> {
                     .map(|d| std::env::current_dir().map(|c| c.join(d)))
                     .transpose()?;
                 let mut core = Backend::builder(TauriPlatform::new(app.clone()))
+                    // Decide dev vs release paths with this crate's profile, as before.
+                    .dev(cfg!(debug_assertions))
                     .hot_reload(hot_reload)
                     .external(config.external.clone())
                     .typescript_out_dir(typescript_dir)
