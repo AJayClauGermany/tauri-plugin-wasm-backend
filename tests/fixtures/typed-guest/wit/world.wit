@@ -13,9 +13,15 @@ interface app {
   fail-hard: func(message: string);
 }
 
+/// Types only: imported because `storage` uses it, but has no functions.
+interface types {
+  type key = string;
+}
+
 /// Resolved as `storage.get` (interface name first).
 interface storage {
-  get: func(key: string) -> option<string>;
+  use types.{key};
+  get: func(key: key) -> option<string>;
 }
 
 world typed {

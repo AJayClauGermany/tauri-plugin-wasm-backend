@@ -19,6 +19,9 @@ const children = [
     shell: true
   })
 ]
+children[1].on('exit', (code) => {
+  if (code) console.log(`[check] svelte-check exited with ${code}: frontend type errors won't be reported (run \`pnpm install\`?)`)
+})
 children[0].on('exit', (code) => {
   children[1].kill()
   process.exit(code ?? 0)

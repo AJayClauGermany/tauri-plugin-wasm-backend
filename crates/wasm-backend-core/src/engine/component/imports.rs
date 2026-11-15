@@ -113,13 +113,25 @@ pub(super) fn resolve(
             ));
             continue;
         }
+        if ty.params().any(|(_, t)| !is_plain(&t)) || ty.results().any(|t| !is_plain(&t)) {
+            problems.push(format!(
+                "`{path}`: host commands can only take and return plain data (records, variants, lists, ...), not resources, streams or futures"
+            ));
+            continue;
+        }
         // Like exported commands: `interface.function`, then `function`.
         let candidates: Vec<String> = instance
             .map(|i| format!("{}.{func}", short_name(i)))
             .into_iter()
             .chain([func.to_string()])
             .collect();
-        let Some(registered) = candidates.iter().find_map(|c| host.host.resolve_command(c)) else {
+        // A qualified name must find a qualified command: across naming
+        // conventions `app.app-version` would also match `app_app_version`.
+        let Some(registered) = candidates.iter().find_map(|c| {
+            host.host
+                .resolve_command(c)
+                .filter(|r| r.contains('.') == c.contains('.'))
+        }) else {
             let names = host.host.command_names();
             problems.push(format!(
                 "`{path}` needs a host command named `{}`, but none is registered (register it with `host_command`; registered: {})",
@@ -162,6 +174,26 @@ pub(super) fn resolve(
         Ok(imports)
     } else {
         Err(problems)
+    }
+}
+
+/// Whether values of `ty` can be converted to and from JSON.
+fn is_plain(ty: &Type) -> bool {
+    match ty {
+        Type::Own(_) | Type::Borrow(_) | Type::Future(_) | Type::Stream(_) | Type::ErrorContext => {
+            false
+        }
+        Type::List(l) => is_plain(&l.ty()),
+        Type::FixedLengthList(l) => is_plain(&l.ty()),
+        Type::Map(m) => is_plain(&m.key()) && is_plain(&m.value()),
+        Type::Record(r) => r.fields().all(|f| is_plain(&f.ty)),
+        Type::Tuple(t) => t.types().all(|t| is_plain(&t)),
+        Type::Variant(v) => v.cases().all(|c| c.ty.as_ref().is_none_or(is_plain)),
+        Type::Option(o) => is_plain(&o.ty()),
+        Type::Result(r) => {
+            r.ok().as_ref().is_none_or(is_plain) && r.err().as_ref().is_none_or(is_plain)
+        }
+        _ => true,
     }
 }
 

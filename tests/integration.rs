@@ -810,6 +810,8 @@ fn typed_host_imports_are_checked_at_load() {
             Builder::new()
                 .host_command("app_version", |_, _: ()| Ok::<_, String>("not a record"))
                 .host_command("add_numbers", |_, _: Value| Ok::<_, String>(0))
+                // Same words as `storage.get`, but not the qualified command.
+                .host_command("storage_get", |_, _: Value| Ok::<_, String>(0))
                 .build(),
         )
         .build(tauri::test::mock_context(tauri::test::noop_assets()))
@@ -832,7 +834,7 @@ fn typed_host_imports_are_checked_at_load() {
         "{err}"
     );
     assert!(
-        err.contains("registered: add_numbers, app_version"),
+        err.contains("registered: add_numbers, app_version, storage_get"),
         "{err}"
     );
     assert!(
