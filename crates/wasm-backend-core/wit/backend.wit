@@ -25,6 +25,11 @@ interface host {
   /// `Builder::host_command`. `args` is a JSON document and the result is a
   /// JSON document. Requires the command to be allowed by the module's
   /// `hostCommands` capability.
+  ///
+  /// Host commands can also be imported as typed functions: every function
+  /// a module imports from an interface outside `wasi:*` and `tauri:backend/*`
+  /// is backed by the host command of the same name, and checked when the
+  /// module loads.
   invoke: func(command: string, args: string) -> result<string, string>;
 }
 

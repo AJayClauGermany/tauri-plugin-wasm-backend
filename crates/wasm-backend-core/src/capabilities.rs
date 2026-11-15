@@ -116,8 +116,10 @@ impl Capabilities {
         self
     }
 
+    /// Host command names match across naming conventions, like module
+    /// commands do (`app_version` allows `app-version` and `appVersion`).
     pub(crate) fn can_invoke(&self, command: &str) -> bool {
-        any_match(&self.host_commands, command)
+        self.host_commands.iter().any(|p| name_matches(p, command))
     }
 
     pub(crate) fn can_emit(&self, event: &str) -> bool {
@@ -127,6 +129,15 @@ impl Capabilities {
 
 pub(crate) fn any_match(patterns: &[String], value: &str) -> bool {
     patterns.iter().any(|p| wildcard_match(p, value))
+}
+
+/// Match a command name against a pattern from a capability or scope.
+/// Patterns with `*` are matched literally; plain names match across
+/// `kebab-case`, `snake_case` and `camelCase` (`get_user` matches `getUser`).
+pub fn name_matches(pattern: &str, name: &str) -> bool {
+    wildcard_match(pattern, name)
+        || (!pattern.contains('*')
+            && crate::naming::to_kebab(pattern) == crate::naming::to_kebab(name))
 }
 
 /// Glob-like matching where `*` matches any (possibly empty) sequence.
@@ -181,5 +192,18 @@ mod tests {
         assert!(caps.can_emit("app://tick"));
         assert!(caps.can_invoke("now"));
         assert!(!caps.can_invoke("now2"));
+    }
+
+    #[test]
+    fn host_command_names_match_across_conventions() {
+        let caps = Capabilities::default()
+            .allow_host_command("app_version")
+            .allow_host_command("db_*");
+        assert!(caps.can_invoke("app-version"));
+        assert!(caps.can_invoke("appVersion"));
+        assert!(!caps.can_invoke("app_versions"));
+        // Wildcards stay literal, so they never widen to other spellings.
+        assert!(caps.can_invoke("db_query"));
+        assert!(!caps.can_invoke("dbAdmin"));
     }
 }

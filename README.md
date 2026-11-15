@@ -67,7 +67,7 @@ tauri::Builder::default()
     .plugin(
         tauri_plugin_wasm_backend::Builder::new()
             // Functions modules may call back into (if their capabilities allow it).
-            .host_command("app_version", |ctx: tauri_plugin_wasm_backend::HostCallContext<_>, _: ()| {
+            .host_command("app_version", |ctx, _: ()| {
                 Ok::<_, String>(ctx.app.package_info().version.to_string())
             })
             .build(),
@@ -114,8 +114,14 @@ package as `tauri-plugin-wasm-backend-api/wit/backend.wit`; put it in
 ```wit
 package example:greeter;
 
+// Host commands the module calls (see "Typed host commands").
+interface app {
+  app-version: func() -> string;
+}
+
 world greeter {
   include tauri:backend/module-with-events@0.1.0;
+  import app;
 
   record person { name: string, age-years: u32 }
 
@@ -127,7 +133,8 @@ world greeter {
 Implement it in JavaScript:
 
 ```js
-import { log, emit, invoke } from 'tauri:backend/host@0.1.0'
+import { log, emit } from 'tauri:backend/host@0.1.0'
+import { appVersion } from 'example:greeter/app'
 
 export function greet(name) {
   emit('greeter://greeted', JSON.stringify({ name }))
@@ -136,8 +143,7 @@ export function greet(name) {
 
 export function describe(person) {
   if (!person.name) throw 'a person needs a name' // rejects the frontend's promise
-  const version = JSON.parse(invoke('app_version', 'null'))
-  return `${person.name} is ${person.ageYears} (app v${version})`
+  return `${person.name} is ${person.ageYears} (app v${appVersion()})`
 }
 
 export const events = {
@@ -235,6 +241,80 @@ Events named in `events.listen` (e.g. emitted by the frontend with
 Host commands are registered with `Builder::host_command`. They take any
 `Deserialize` arguments and return `Result<impl Serialize, impl Display>`, and
 receive a `HostCallContext` with the `AppHandle` and the calling module's name.
+Like module commands, their names match across `snake_case`, `kebab-case` and
+`camelCase`, and "no arguments" may be sent as `null` or `{}`.
+
+### Typed host commands
+
+Instead of passing JSON strings to `invoke`, a WIT module can import host
+commands as ordinary typed functions. Every function imported from an
+interface outside `wasi:*` and `tauri:backend/*` is backed by the host command
+with the same name (`interface.function` is tried first, then `function`):
+
+```wit
+interface app {
+  record version { major: u32, minor: u32 }
+  app-version: func() -> version;                                 // host command `app_version`
+  add-numbers: func(left-side: s32, right-side: s32) -> result<s32, string>;
+}
+
+world greeter {
+  include tauri:backend/module@0.1.0;
+  import app;
+}
+```
+
+```js
+import { appVersion, addNumbers } from 'example:greeter/app'
+const { major } = appVersion()
+```
+
+```rust
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AddArgs { left_side: i32, right_side: i32 }
+
+Builder::new().host_command("add_numbers", |_ctx, a: AddArgs| {
+    a.left_side.checked_add(a.right_side).ok_or("overflow")
+})
+```
+
+- Arguments reach the host command as an object keyed by camelCase
+  parameter name, the way `invoke` arguments reach a Tauri command, and its
+  JSON result is converted to the declared WIT type.
+- A host `Err` becomes the `err` case of a `result` return type. Without one
+  it traps the module, like a `throw` in an export without a `result`.
+- Imports are checked **when the module loads**: each one needs a registered
+  host command that `capabilities.hostCommands` allows. A missing, renamed or
+  disallowed command fails the load with every problem listed (a hot reload
+  keeps the previous version running), instead of failing at the first call.
+  `ModuleInfo::imports` lists them, e.g. to show what a plugin will use.
+
+Publishing the interface as a `.wit` file gives plugin authors the app's
+contract to build against; wit-bindgen turns it into typed Rust functions,
+so a change there breaks their build instead of their plugin.
+
+## What catches a change
+
+Each boundary of a module is checked as early as the information exists:
+
+| You change…                                  | Caught by                                                                                         | When            |
+|----------------------------------------------|---------------------------------------------------------------------------------------------------|-----------------|
+| A WIT export (name, parameters, types)       | The regenerated [TypeScript bindings](#typescript-types): type errors at frontend call sites      | on reload       |
+| …called through untyped `invokeModule`       | `invalid arguments for …: missing required key …` / `expected …, got …`                           | on call         |
+| A host command's name                        | Modules importing it fail to load; stale `hostCommands` entries become `ModuleInfo::warnings`     | on load         |
+| A host command's result type                 | Typed imports: `host command … returned a value that doesn't match its import …: .field: …`      | on call         |
+| A host command's argument type               | `invalid arguments for host command …` (serde's message)                                          | on call         |
+| A module's imports or capabilities           | Load error listing every import that is unregistered or not allowed                              | on load         |
+| `events.listen` for a module without handler | `ModuleInfo::warnings`                                                                            | on load         |
+| Module calls through string `invoke`         | Only the call itself: arguments and result are untyped JSON                                       | on call         |
+| Event payloads, Extism exports               | Not checked (untyped, like Tauri events); bindings use `unknown`                                  | -               |
+
+Warnings are logged (`log` crate, target `wasm_backend`) and included in the
+`ModuleInfo` sent with `wasm-backend://module-loaded`/`-reloaded`, so a dev UI
+can show them. Frontend type errors only appear if something type-checks the
+frontend: the example runs `svelte-check --watch` from its `pnpm dev`, so a
+changed WIT signature shows up in the `tauri dev` terminal.
 
 ## Capabilities
 
@@ -351,6 +431,10 @@ export const greeter = {
 
 Set `typescriptOutDir` (or `Builder::typescript_out_dir`) to write these on
 every load/reload in debug builds, or fetch them with `moduleTypescript(name)`.
+Record and variant types are inlined, as components don't keep the names of
+world-level types; name one with
+`type Person = Parameters<typeof greeter.describe>[0]` instead of copying it,
+so it follows the module.
 With the `specta` feature, the plugin's own models (`ModuleInfo`,
 `Capabilities`, …) implement `specta::Type` for use with tauri-specta.
 

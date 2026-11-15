@@ -5,7 +5,7 @@ use tauri::{
     ipc::{CommandScope, GlobalScope},
 };
 
-use wasm_backend_core::{naming, wildcard_match};
+use wasm_backend_core::{name_matches, wildcard_match};
 
 use crate::{Error, ModuleInfo, Result, WasmBackendExt};
 
@@ -33,9 +33,10 @@ pub struct InvokeScope {
 impl InvokeScope {
     fn matches(&self, module: &str, command: &str) -> bool {
         wildcard_match(&self.module, module)
-            && self.command.as_deref().is_none_or(|c| {
-                wildcard_match(c, command) || naming::to_kebab(c) == naming::to_kebab(command)
-            })
+            && self
+                .command
+                .as_deref()
+                .is_none_or(|c| name_matches(c, command))
     }
 }
 

@@ -33,7 +33,17 @@ export interface ModuleInfo {
   /** Incremented on every reload. */
   generation: number
   commands: CommandInfo[]
+  /**
+   * Host commands the module imports as typed WIT functions, named as
+   * registered. Checked when the module loads.
+   */
+  imports: CommandInfo[]
   capabilities: Record<string, unknown>
+  /**
+   * Likely configuration mistakes found when the module was (re)loaded, e.g.
+   * a `hostCommands` entry matching no registered host command.
+   */
+  warnings: string[]
 }
 
 export interface ModuleError {

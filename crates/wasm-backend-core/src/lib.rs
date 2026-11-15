@@ -91,7 +91,7 @@ mod task;
 mod watcher;
 
 pub use capabilities::{
-    Capabilities, EventCapabilities, Preopen, WasiCapabilities, wildcard_match,
+    Capabilities, EventCapabilities, Preopen, WasiCapabilities, name_matches, wildcard_match,
 };
 pub use config::{Config, EngineKind, ExternalConfig, ModuleConfig};
 pub use engine::{CommandInfo, ParamInfo};

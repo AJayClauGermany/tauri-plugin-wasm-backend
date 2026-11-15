@@ -17,12 +17,23 @@
   let name = $state('')
   let age = $state(30)
   let numbers = $state('3, 1, 4, 1, 5, 9, 2, 6')
+  /** @type {import('tauri-plugin-wasm-backend-api').ModuleInfo[]} */
   let modules = $state([])
+  /** @type {string[]} */
   let log = $state([])
 
+  /** @param {unknown} entry */
   function append(entry) {
     const text = typeof entry === 'string' ? entry : JSON.stringify(entry)
     log = [`[${new Date().toLocaleTimeString()}] ${text}`, ...log].slice(0, 50)
+  }
+
+  /**
+   * Likely configuration mistakes, e.g. a `hostCommands` typo.
+   * @param {import('tauri-plugin-wasm-backend-api').ModuleInfo} m
+   */
+  function warn(m) {
+    for (const w of m.warnings) append(`warning in ${m.name}: ${w}`)
   }
 
   async function refresh() {
@@ -32,8 +43,8 @@
   onMount(() => {
     refresh()
     const unlisten = [
-      onModuleLoaded((m) => (append(`loaded ${m.name}`), refresh())),
-      onModuleReloaded((m) => (append(`hot reloaded ${m.name} (generation ${m.generation})`), refresh())),
+      onModuleLoaded((m) => (append(`loaded ${m.name}`), warn(m), refresh())),
+      onModuleReloaded((m) => (append(`hot reloaded ${m.name} (generation ${m.generation})`), warn(m), refresh())),
       onModuleError((e) => append(`module error in ${e.module}: ${e.error}`)),
       listen('greeter://greeted', (e) => append({ event: 'greeter://greeted', payload: e.payload })),
       listen('greeter://pong', (e) => append({ event: 'greeter://pong', payload: e.payload })),
@@ -42,6 +53,7 @@
     return () => unlisten.forEach((p) => p.then((f) => f()))
   })
 
+  /** @param {Promise<unknown>} promise */
   const run = (promise) => promise.then(append).catch((e) => append(`error: ${JSON.stringify(e)}`))
 
   // Typed: `greet(name: string): Promise<string>`.
@@ -95,6 +107,12 @@
           {#each m.commands as c}
             <code>{c.name}({c.params.map((p) => `${p.name}: ${p.type}`).join(', ')}){c.result ? ` -> ${c.result}` : ''}</code>
           {/each}
+          {#each m.imports as c}
+            <code>uses host command {c.name}</code>
+          {/each}
+          {#each m.warnings as w}
+            <code class="warning">⚠ {w}</code>
+          {/each}
         </div>
       </div>
     {/each}
@@ -126,6 +144,9 @@
   .commands code {
     display: block;
     font-size: 0.85em;
+  }
+  .commands .warning {
+    color: #b45309;
   }
   pre {
     text-align: left;

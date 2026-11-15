@@ -123,10 +123,12 @@ impl<R: Runtime> Builder<R> {
         self
     }
 
-    /// Register a host command that modules can call through the host
-    /// `invoke` function, if their capabilities allow it. Arguments are
-    /// deserialized from JSON, like Tauri command arguments, and the result
-    /// is serialized to JSON.
+    /// Register a host command that modules can call, if their
+    /// capabilities allow it: through the host `invoke` function, or as a
+    /// typed function a WIT module imports (checked when it loads; see the
+    /// README). Arguments are deserialized from JSON, like Tauri command
+    /// arguments, and the result is serialized to JSON. Names match across
+    /// `snake_case`, `kebab-case` and `camelCase`.
     pub fn host_command<A, T, E, F>(mut self, name: impl Into<String>, f: F) -> Self
     where
         A: DeserializeOwned,

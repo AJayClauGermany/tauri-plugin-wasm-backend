@@ -7,6 +7,7 @@
 //! exactly like Tauri maps invoke arguments to Rust command parameters.
 
 mod convert;
+mod imports;
 
 use std::{
     sync::{
@@ -200,6 +201,7 @@ pub(crate) struct ComponentInstance {
     instance: Option<wasmtime::component::Instance>,
     commands: Vec<Command>,
     on_event: Option<ComponentExportIndex>,
+    imports: Vec<CommandInfo>,
 }
 
 impl ComponentInstance {
@@ -210,10 +212,26 @@ impl ComponentInstance {
             message: format!("{e:#}"),
         };
         let component = Component::new(&runtime.engine, bytes).map_err(load_err)?;
-        let pre = runtime
-            .linker
-            .instantiate_pre(&component)
-            .map_err(load_err)?;
+        let host_imports =
+            imports::resolve(&runtime.engine, &component, &host).map_err(|problems| {
+                Error::Load {
+                    module: host.module.clone(),
+                    message: format!(
+                        "its host command imports can't be satisfied:\n  - {}",
+                        problems.join("\n  - ")
+                    ),
+                }
+            })?;
+        let pre = if host_imports.is_empty() {
+            runtime.linker.instantiate_pre(&component)
+        } else {
+            // The shared linker provides WASI and `tauri:backend`; host
+            // command imports differ per module.
+            let mut linker = runtime.linker.clone();
+            imports::link(&mut linker, &host_imports)
+                .and_then(|()| linker.instantiate_pre(&component))
+        }
+        .map_err(load_err)?;
         let (commands, on_event) = exports(&runtime.engine, &component);
         let store = new_store(runtime, &host)?;
         let mut this = Self {
@@ -224,6 +242,7 @@ impl ComponentInstance {
             instance: None,
             commands,
             on_event,
+            imports: host_imports.into_iter().map(|i| i.info).collect(),
         };
         this.instantiate().map_err(|e| Error::Load {
             module: this.host.module.clone(),
@@ -293,12 +312,13 @@ impl ComponentInstance {
 }
 
 fn trap_message(e: wasmtime::Error) -> String {
-    if let Some(trap) = e.downcast_ref::<wasmtime::Trap>()
-        && *trap == wasmtime::Trap::Interrupt
-    {
-        return "call timed out".into();
+    match e.downcast_ref::<wasmtime::Trap>() {
+        Some(wasmtime::Trap::Interrupt) => "call timed out".into(),
+        Some(_) => format!("{e:#}"),
+        // A host function failed (e.g. a host command import): its message
+        // says what happened, the wasm backtrace in front of it doesn't.
+        None => e.root_cause().to_string(),
     }
-    format!("{e:#}")
 }
 
 fn new_store(runtime: &Runtime, host: &Arc<ModuleHost>) -> Result<Store<State>> {
@@ -479,8 +499,16 @@ impl ModuleInstance for ComponentInstance {
         self.call_index(&index, &params, &mut [])
     }
 
+    fn handles_events(&self) -> bool {
+        self.on_event.is_some()
+    }
+
     fn commands(&self) -> Vec<CommandInfo> {
         self.commands.iter().map(|c| c.info.clone()).collect()
+    }
+
+    fn imports(&self) -> Vec<CommandInfo> {
+        self.imports.clone()
     }
 
     fn typescript(&self, module: &str) -> Option<String> {
