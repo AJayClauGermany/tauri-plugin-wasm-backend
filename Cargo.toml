@@ -9,6 +9,8 @@ exclude = ["/examples", "/crates", "/dist-js", "/guest-js", "/node_modules", "/t
 links = "tauri-plugin-wasm-backend"
 
 [workspace]
+# The previous in-repository copy of the core, kept building until the move to
+# rust-wasm-core-interchange is confirmed; to be removed in a follow-up.
 members = ["crates/wasm-backend-core"]
 # The example app is its own workspace.
 exclude = ["examples"]
@@ -27,7 +29,9 @@ specta = ["wasm-backend-core/specta"]
 
 [dependencies]
 # Engines, capabilities, registry and hot reload, shared with non-Tauri hosts.
-wasm-backend-core = { version = "0.1.0", path = "crates/wasm-backend-core", default-features = false }
+# To go back to the in-repository copy, replace `git` and `rev` with
+# `path = "crates/wasm-backend-core"`.
+wasm-backend-core = { version = "0.1.0", git = "https://github.com/AJayClauGermany/rust-wasm-core-interchange", rev = "6751777c7d79cca561d55e032ac1c3ccdc98563f", default-features = false }
 tauri = { version = "2.12.5" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"

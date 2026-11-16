@@ -466,7 +466,9 @@ fails, delete `examples/tauri-app/node_modules` and reinstall.
 ## Using the core outside Tauri
 
 The engines, capabilities, module registry and hot reload live in the
-framework-agnostic [`wasm-backend-core`](crates/wasm-backend-core) crate. The
+framework-agnostic `wasm-backend-core` crate, developed in
+[rust-wasm-core-interchange](https://github.com/AJayClauGermany/rust-wasm-core-interchange)
+together with guest modules in several languages that test it. The
 Tauri plugin is a thin layer on top of it (the plugin, IPC commands,
 permissions and `TauriPlatform`) and re-exports its types, so Tauri apps
 don't need to depend on it directly.

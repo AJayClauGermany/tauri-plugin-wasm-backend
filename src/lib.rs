@@ -225,7 +225,7 @@ mod tests {
         assert_eq!(
             include_str!("../wit/backend.wit"),
             wasm_backend_core::WIT,
-            "wit/backend.wit and crates/wasm-backend-core/wit/backend.wit differ"
+            "wit/backend.wit differs from the `wasm-backend-core` dependency's (rust-wasm-core-interchange: crates/wasm-backend-core/wit/backend.wit)"
         );
     }
 }
