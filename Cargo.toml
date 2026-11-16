@@ -5,13 +5,10 @@ license = "Apache-2.0 WITH LLVM-exception"
 description = "Run hot-reloadable, capability-restricted WebAssembly backend modules (WIT components or Extism plugins) inside a Tauri app."
 edition = "2024"
 rust-version = "1.90"
-exclude = ["/examples", "/crates", "/dist-js", "/guest-js", "/node_modules", "/tests/fixtures/*/target"]
+exclude = ["/examples", "/dist-js", "/guest-js", "/node_modules", "/tests/fixtures/*/target"]
 links = "tauri-plugin-wasm-backend"
 
 [workspace]
-# The previous in-repository copy of the core, kept building until the move to
-# rust-wasm-core-interchange is confirmed; to be removed in a follow-up.
-members = ["crates/wasm-backend-core"]
 # The example app is its own workspace.
 exclude = ["examples"]
 
@@ -29,8 +26,7 @@ specta = ["wasm-backend-core/specta"]
 
 [dependencies]
 # Engines, capabilities, registry and hot reload, shared with non-Tauri hosts.
-# To go back to the in-repository copy, replace `git` and `rev` with
-# `path = "crates/wasm-backend-core"`.
+# Pulled from git until wasm-backend-core is published on crates.io.
 wasm-backend-core = { version = "0.1.0", git = "https://github.com/AJayClauGermany/rust-wasm-core-interchange", rev = "6751777c7d79cca561d55e032ac1c3ccdc98563f", default-features = false }
 tauri = { version = "2.12.5" }
 serde = { version = "1.0", features = ["derive"] }
