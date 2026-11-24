@@ -1,7 +1,10 @@
 //! The Tauri side of the module registry: a [`Platform`] backed by an
 //! [`AppHandle`] and the [`WasmBackend`] handle stored in the app state.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -158,6 +161,18 @@ impl<R: Runtime> WasmBackend<R> {
     /// resets the module's state).
     pub fn reload(&self, name: &str) -> Result<ModuleInfo> {
         Ok(self.0.reload(name)?)
+    }
+
+    /// A module's state store: what it wrote through `tauri:backend/state`
+    /// (`tauri_state_*` for Extism), whether or not it is loaded right now.
+    pub fn state(&self, module: &str) -> Result<BTreeMap<String, String>> {
+        Ok(self.0.state(module)?)
+    }
+
+    /// Remove everything a module stored, e.g. when the user uninstalls a
+    /// plugin. Unloading a module keeps its state.
+    pub fn clear_state(&self, module: &str) -> Result<()> {
+        Ok(self.0.clear_state(module)?)
     }
 
     /// Load new plugins from the external plugins directory and unload the

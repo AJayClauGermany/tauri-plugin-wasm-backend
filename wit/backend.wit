@@ -33,6 +33,35 @@ interface host {
   invoke: func(command: string, args: string) -> result<string, string>;
 }
 
+/// A small key-value store of the module's own, kept by the host. A module's
+/// memory is reset when it is reloaded or traps; what it stores here is not,
+/// and the app can keep it between runs.
+///
+/// Import it in your world next to the base world:
+///
+/// ```wit
+/// world counter {
+///   include tauri:backend/module@0.1.0;
+///   import tauri:backend/state@0.1.0;
+///   export next: func() -> u32;
+/// }
+/// ```
+///
+/// Every key is checked against the module's `state` capability. Writes made
+/// during a call are kept when the call returns and dropped if it traps, so
+/// a crash never leaves half an update behind.
+interface state {
+  /// The value under `key`, if there is one.
+  get: func(key: string) -> result<option<string>, string>;
+  /// Store `value` under `key`. Keys are at most 256 bytes and values at
+  /// most 64 KiB.
+  set: func(key: string, value: string) -> result<_, string>;
+  /// Remove `key`, if it is there.
+  remove: func(key: string) -> result<_, string>;
+  /// Every key in the store the module's capability reaches, sorted.
+  keys: func() -> result<list<string>, string>;
+}
+
 /// Optional interface a module exports to receive app events it subscribed
 /// to through the `events.listen` capability.
 interface events {
@@ -57,4 +86,11 @@ world module {
 world module-with-events {
   import host;
   export events;
+}
+
+/// Everything the host provides. Guests don't need it: import `state` in
+/// your own world, as shown on the interface.
+world host-imports {
+  import host;
+  import state;
 }

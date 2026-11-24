@@ -909,6 +909,7 @@ fn configuration_warnings() {
                 Capabilities::default()
                     .allow_host_command("echo")
                     .allow_host_command("app_verison")
+                    .allow_state("*")
                     .listen("app://ping"),
             ),
         )
@@ -1008,4 +1009,71 @@ fn load_gate_and_restart_limit() {
             .unwrap(),
         json!("Hello, again!")
     );
+}
+
+#[test]
+fn module_state_survives_reloads_traps_and_restarts() {
+    let dir = temp_dir("state");
+    let start = || {
+        app(Builder::new()
+            .state_dir(dir.join("store"))
+            .module(
+                "fixture",
+                ModuleConfig::from_path(component())
+                    .capabilities(Capabilities::default().allow_state("*")),
+            )
+            .module(
+                "ext",
+                ModuleConfig::from_path(extism())
+                    .capabilities(Capabilities::default().allow_state("notes/*")),
+            ))
+    };
+
+    let first = start();
+    let b = backend(&first);
+    let visits = |b: &WasmBackend<MockRuntime>| b.invoke("fixture", "visits", Value::Null).unwrap();
+    assert_eq!(visits(&b), json!(1));
+    assert_eq!(visits(&b), json!(2));
+
+    // A trap drops what the call wrote and keeps the rest; so does a reload.
+    assert!(matches!(
+        b.invoke(
+            "fixture",
+            "remember-then-crash",
+            json!({ "key": "visits", "value": "99" })
+        ),
+        Err(Error::Runtime(_))
+    ));
+    assert_eq!(visits(&b), json!(3));
+    b.reload("fixture").unwrap();
+    assert_eq!(visits(&b), json!(4));
+
+    // Extism modules use the same store, within their own keys.
+    b.invoke(
+        "ext",
+        "remember",
+        json!({ "key": "notes/a", "value": "hi" }),
+    )
+    .unwrap();
+    let err = b
+        .invoke("ext", "remember", json!({ "key": "other", "value": "x" }))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("not allowed to use state key"), "{err}");
+    assert_eq!(b.state("ext").unwrap()["notes/a"], "hi");
+    assert!(dir.join("store/fixture.json").is_file());
+    drop(b);
+    drop(first);
+
+    // A new app, as after a restart, finds the state where it was left.
+    let second = start();
+    let b = backend(&second);
+    assert_eq!(visits(&b), json!(5));
+    assert_eq!(
+        b.invoke("ext", "recall", json!({ "key": "notes/a" }))
+            .unwrap(),
+        json!("hi")
+    );
+    b.clear_state("fixture").unwrap();
+    assert_eq!(visits(&b), json!(1));
 }

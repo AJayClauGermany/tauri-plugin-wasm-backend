@@ -238,6 +238,35 @@ Modules call into the app through the `tauri:backend/host` interface
 | `emit(event, payload)`         | `events.emit` matches the event   |
 | `invoke(command, args)`        | `hostCommands` matches the command|
 
+A module's memory is reset whenever it is reloaded (every hot reload) or
+traps. For what should outlive that, import the `tauri:backend/state`
+interface next to the base world: a key-value store of the module's own,
+kept by the app.
+
+```wit
+world counter {
+  include tauri:backend/module@0.1.0;
+  import tauri:backend/state@0.1.0;
+  export next: func() -> u32;
+}
+```
+
+| function             | capability needed          |
+|----------------------|----------------------------|
+| `get(key)`           | `state` matches the key    |
+| `set(key, value)`    | `state` matches the key    |
+| `remove(key)`        | `state` matches the key    |
+| `keys()`             | lists the keys `state` matches |
+
+Values are strings (at most 64 KiB; keys at most 256 bytes). Writes made
+during a call are kept when it returns and dropped if it traps, so a crash
+never leaves half an update behind. State is stored in
+`$APPDATA/wasm-backend/state`, one JSON file per module, so it survives
+restarting the app; change the directory with `"stateDir"` (or
+`Builder::state_dir`), or keep it elsewhere with `Builder::state_store`.
+From Rust, `app.wasm_backend().state(module)` reads a module's store and
+`clear_state(module)` wipes it (unloading a module keeps its state).
+
 Events named in `events.listen` (e.g. emitted by the frontend with
 `emit('app://ping', …)`) are delivered to the module's `on-event` export.
 
@@ -326,6 +355,7 @@ Modules are deny-by-default:
 ```jsonc
 "capabilities": {
   "hostCommands": ["app_version", "db_*"],   // `*` wildcards
+  "state": ["*"],                           // keys of its state store, `*` wildcards
   "events": {
     "emit": ["greeter://*"],
     "listen": ["app://ping"]                // exact names
@@ -420,6 +450,10 @@ call. Host functions take and return JSON strings:
 | `tauri_log`    | `{ level, message }`     | -                                         |
 | `tauri_emit`   | `{ event, payload }`     | `{ "ok": null }` or `{ "err": "…" }`      |
 | `tauri_invoke` | `{ command, args }`      | `{ "ok": result }` or `{ "err": "…" }`    |
+| `tauri_state_get`    | `{ key }`          | `{ "ok": value or null }` or `{ "err": "…" }` |
+| `tauri_state_set`    | `{ key, value }`   | `{ "ok": null }` or `{ "err": "…" }`      |
+| `tauri_state_remove` | `{ key }`          | `{ "ok": null }` or `{ "err": "…" }`      |
+| `tauri_state_keys`   | `{}`               | `{ "ok": [key, …] }` or `{ "err": "…" }`  |
 
 An exported `on_event` (or `onEvent`) receives `{ event, payload }`.
 

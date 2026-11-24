@@ -11,6 +11,10 @@ extern "ExtismHost" {
     fn tauri_log(input: String);
     fn tauri_emit(input: String) -> String;
     fn tauri_invoke(input: String) -> String;
+    fn tauri_state_get(input: String) -> String;
+    fn tauri_state_set(input: String) -> String;
+    fn tauri_state_remove(input: String) -> String;
+    fn tauri_state_keys(input: String) -> String;
 }
 
 static COUNT: Mutex<u32> = Mutex::new(0);
@@ -74,4 +78,38 @@ pub fn on_event(Json(event): Json<Value>) -> FnResult<()> {
 #[plugin_fn]
 pub fn last_event() -> FnResult<Json<Option<Value>>> {
     Ok(Json(LAST_EVENT.lock().unwrap().clone()))
+}
+
+/// `{ "key", "value" }`: store a value in the module's state.
+#[plugin_fn]
+pub fn remember(Json(args): Json<Value>) -> FnResult<Json<Value>> {
+    let raw = unsafe { tauri_state_set(args.to_string())? };
+    Ok(Json(reply(raw)?))
+}
+
+/// `{ "key" }`: the stored value, or `null`.
+#[plugin_fn]
+pub fn recall(Json(args): Json<Value>) -> FnResult<Json<Value>> {
+    let raw = unsafe { tauri_state_get(args.to_string())? };
+    Ok(Json(reply(raw)?))
+}
+
+#[plugin_fn]
+pub fn forget(Json(args): Json<Value>) -> FnResult<Json<Value>> {
+    let raw = unsafe { tauri_state_remove(args.to_string())? };
+    Ok(Json(reply(raw)?))
+}
+
+#[plugin_fn]
+pub fn remembered() -> FnResult<Json<Value>> {
+    let raw = unsafe { tauri_state_keys("{}".to_string())? };
+    Ok(Json(reply(raw)?))
+}
+
+/// Stores, then traps: the write must not be kept.
+#[plugin_fn]
+pub fn remember_then_crash(Json(args): Json<Value>) -> FnResult<String> {
+    let raw = unsafe { tauri_state_set(args.to_string())? };
+    reply(raw)?;
+    panic!("crash requested")
 }

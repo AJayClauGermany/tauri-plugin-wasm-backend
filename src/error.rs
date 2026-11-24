@@ -33,6 +33,9 @@ pub enum Error {
     /// allows and stays stopped until it is reloaded.
     #[error("WASM module `{module}` was stopped after trapping {traps} times and must be reloaded")]
     Stopped { module: String, traps: u32 },
+    /// A module's state could not be read from or written to its store.
+    #[error("WASM module state: {0}")]
+    State(String),
     #[error("{0}")]
     NotAllowed(String),
     #[error(
@@ -62,6 +65,7 @@ impl From<wasm_backend_core::Error> for Error {
             Core::Command(v) => Error::Command(v),
             Core::Runtime(m) => Error::Runtime(m),
             Core::Stopped { module, traps } => Error::Stopped { module, traps },
+            Core::State(m) => Error::State(m),
             Core::NotAllowed(m) => Error::NotAllowed(m),
             Core::Reentrant(m) => Error::Reentrant(m),
             Core::EngineDisabled(e) => Error::EngineDisabled(e),
