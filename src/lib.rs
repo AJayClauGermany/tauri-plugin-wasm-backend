@@ -41,11 +41,13 @@
 //! // tauri::Builder::default().plugin(plugin)
 //! ```
 
-use std::{collections::HashMap, fmt::Display, path::PathBuf};
+use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc};
 
 use serde::{Serialize, de::DeserializeOwned};
-use tauri::{Manager, Runtime, Wry, plugin::TauriPlugin};
-use wasm_backend_core::{Backend, HostCall, HostCommandFn, TypeScriptOptions};
+use tauri::{AppHandle, Manager, Runtime, Wry, plugin::TauriPlugin};
+use wasm_backend_core::{
+    Backend, BaseDir, HostCall, HostCommandFn, LoadGate, TypeScriptOptions, resolve_dir,
+};
 
 mod backend;
 mod commands;
@@ -56,8 +58,9 @@ pub use commands::InvokeScope;
 pub use error::{Error, Result};
 pub use wasm_backend_core::{
     self, Capabilities, CommandInfo, Config, EVENT_MODULE_ERROR, EVENT_MODULE_LOADED,
-    EVENT_MODULE_RELOADED, EVENT_MODULE_UNLOADED, EngineKind, EventCapabilities, ExternalConfig,
-    ModuleConfig, ModuleError, ModuleInfo, ParamInfo, Preopen, WasiCapabilities,
+    EVENT_MODULE_RELOADED, EVENT_MODULE_TRAPPED, EVENT_MODULE_UNLOADED, EngineKind,
+    EventCapabilities, ExternalConfig, FileStateStore, LoadRequest, ModuleConfig, ModuleError,
+    ModuleInfo, ModuleTrap, ParamInfo, Preopen, StateStore, WasiCapabilities,
 };
 
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`] and [`tauri::Window`]
@@ -79,6 +82,31 @@ pub struct Builder<R: Runtime = Wry> {
     config: Config,
     host_commands: HashMap<String, HostCommandFn<TauriPlatform<R>>>,
     typescript_out_dir: Option<PathBuf>,
+    load_gate: Option<LoadGate<TauriPlatform<R>>>,
+    state_store: Option<Box<dyn StateStore>>,
+}
+
+/// Where module state is kept when nothing else is configured.
+const DEFAULT_STATE_DIR: &str = "$APPDATA/wasm-backend/state";
+
+/// A boxed [`StateStore`], so the builder can hold any.
+struct BoxedStateStore(Box<dyn StateStore>);
+
+impl StateStore for BoxedStateStore {
+    fn load(
+        &self,
+        module: &str,
+    ) -> std::result::Result<std::collections::BTreeMap<String, String>, String> {
+        self.0.load(module)
+    }
+
+    fn save(
+        &self,
+        module: &str,
+        state: &std::collections::BTreeMap<String, String>,
+    ) -> std::result::Result<(), String> {
+        self.0.save(module, state)
+    }
 }
 
 impl<R: Runtime> Default for Builder<R> {
@@ -93,6 +121,8 @@ impl<R: Runtime> Builder<R> {
             config: Config::default(),
             host_commands: HashMap::new(),
             typescript_out_dir: None,
+            load_gate: None,
+            state_store: None,
         }
     }
 
@@ -153,11 +183,51 @@ impl<R: Runtime> Builder<R> {
         self
     }
 
+    /// Keep module state (what modules store through `tauri:backend/state`)
+    /// in `dir`, one JSON file per module. May start with `$APPDATA` and the
+    /// like; relative paths are resolved against the app data directory.
+    /// Defaults to `$APPDATA/wasm-backend/state`.
+    pub fn state_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.config.state_dir = Some(dir.into());
+        self
+    }
+
+    /// Keep module state in a store of your own (a database, say) instead
+    /// of files in the state directory.
+    pub fn state_store(mut self, store: impl StateStore) -> Self {
+        self.state_store = Some(Box::new(store));
+        self
+    }
+
+    /// Ask `gate` before any module is loaded or reloaded: app modules,
+    /// external plugins and [`WasmBackend::load`] alike. It sees the
+    /// module's name, path, capabilities and the SHA-256 of its bytes (see
+    /// [`LoadRequest`]) before any of it is compiled; returning
+    /// `Err(reason)` refuses the load.
+    ///
+    /// Use it to decide which third-party plugins run, e.g. by checking
+    /// [`LoadRequest::sha256`] against the plugins the user approved. The
+    /// same file may be asked about more than once, so remember the answer.
+    pub fn load_gate<F>(mut self, gate: F) -> Self
+    where
+        F: Fn(&AppHandle<R>, &LoadRequest<'_>) -> std::result::Result<(), String>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.load_gate = Some(Arc::new(move |platform: &TauriPlatform<R>, request| {
+            gate(platform.app(), request)
+        }));
+        self
+    }
+
     pub fn build(self) -> TauriPlugin<R, Option<Config>> {
         let Builder {
             config: builder_config,
             host_commands,
             typescript_out_dir,
+            load_gate,
+            state_store,
         } = self;
         tauri::plugin::Builder::<R, Option<Config>>::new("wasm-backend")
             .invoke_handler(tauri::generate_handler![
@@ -175,6 +245,9 @@ impl<R: Runtime> Builder<R> {
                 if builder_config.hot_reload.is_some() {
                     config.hot_reload = builder_config.hot_reload;
                 }
+                if builder_config.state_dir.is_some() {
+                    config.state_dir = builder_config.state_dir;
+                }
                 let hot_reload = config.hot_reload.unwrap_or(cfg!(debug_assertions));
                 if hot_reload && !cfg!(feature = "hot-reload") {
                     log::warn!(
@@ -187,7 +260,23 @@ impl<R: Runtime> Builder<R> {
                     .filter(|_| cfg!(debug_assertions))
                     .map(|d| std::env::current_dir().map(|c| c.join(d)))
                     .transpose()?;
-                let mut core = Backend::builder(TauriPlatform::new(app.clone()))
+                let platform = TauriPlatform::new(app.clone());
+                let state_store = match state_store {
+                    Some(store) => store,
+                    None => {
+                        let dir = config
+                            .state_dir
+                            .clone()
+                            .unwrap_or_else(|| PathBuf::from(DEFAULT_STATE_DIR));
+                        Box::new(FileStateStore::new(resolve_dir(
+                            &platform,
+                            &dir,
+                            BaseDir::AppData,
+                        )?))
+                    }
+                };
+                let mut core = Backend::builder(platform)
+                    .state_store(BoxedStateStore(state_store))
                     // Decide dev vs release paths with this crate's profile, as before.
                     .dev(cfg!(debug_assertions))
                     .hot_reload(hot_reload)
@@ -199,6 +288,9 @@ impl<R: Runtime> Builder<R> {
                     });
                 for (name, f) in host_commands {
                     core = core.host_command_fn(name, f);
+                }
+                if let Some(gate) = load_gate {
+                    core = core.load_gate(move |platform, request| gate(platform, request));
                 }
                 let backend = WasmBackend(core.build()?);
                 // Managed before modules load so host commands and event

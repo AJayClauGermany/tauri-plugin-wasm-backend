@@ -7,6 +7,7 @@ wit_bindgen::generate!({ world: "fixture", generate_all });
 use exports::test::fixture::math;
 use exports::tauri::backend::events;
 use tauri::backend::host::{self, LogLevel};
+use tauri::backend::state;
 
 struct Fixture;
 
@@ -90,6 +91,34 @@ impl Guest for Fixture {
     }
 
     fn crash() {
+        panic!("crash requested");
+    }
+
+    fn remember(key: String, value: String) -> Result<(), String> {
+        state::set(&key, &value)
+    }
+
+    fn recall(key: String) -> Result<Option<String>, String> {
+        state::get(&key)
+    }
+
+    fn forget(key: String) -> Result<(), String> {
+        state::remove(&key)
+    }
+
+    fn remembered() -> Result<Vec<String>, String> {
+        state::keys()
+    }
+
+    fn visits() -> Result<u32, String> {
+        let seen: u32 = state::get("visits")?.and_then(|v| v.parse().ok()).unwrap_or(0);
+        state::set("visits", &(seen + 1).to_string())?;
+        // A read sees the write made earlier in the same call.
+        Ok(state::get("visits")?.and_then(|v| v.parse().ok()).unwrap_or(0))
+    }
+
+    fn remember_then_crash(key: String, value: String) {
+        state::set(&key, &value).unwrap();
         panic!("crash requested");
     }
 }

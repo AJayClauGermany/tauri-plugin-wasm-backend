@@ -6,6 +6,7 @@ interface math {
 
 world fixture {
   include tauri:backend/module-with-events@0.1.0;
+  import tauri:backend/state@0.1.0;
 
   record person {
     name: string,
@@ -38,4 +39,13 @@ world fixture {
   export last-event: func() -> option<string>;
   export spin: func();
   export crash: func();
+
+  export remember: func(key: string, value: string) -> result<_, string>;
+  export recall: func(key: string) -> result<option<string>, string>;
+  export forget: func(key: string) -> result<_, string>;
+  export remembered: func() -> result<list<string>, string>;
+  /// Counts in the state store instead of in memory.
+  export visits: func() -> result<u32, string>;
+  /// Stores, then traps: the write must not be kept.
+  export remember-then-crash: func(key: string, value: string);
 }

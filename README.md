@@ -212,7 +212,10 @@ and the frontend receives `wasm-backend://module-reloaded`
   `T | null`, enums are strings, variants are `{ tag, val }`, flags are arrays
   of names, `list<u8>` is an array of numbers.
 - A trap (panic, uncaught JS exception, timeout, out of memory) rejects the
-  call; the module is re-instantiated (state reset) for the next call.
+  call; the module is re-instantiated (state reset) for the next call, and
+  `wasm-backend://module-trapped` is emitted (`onModuleTrapped`). With the
+  `maxRestarts` capability, a module that keeps trapping is stopped until it
+  is reloaded instead of being restarted forever.
   To return an error the frontend can handle, declare the function as
   `-> result<T, E>`: a JS `throw` then becomes `err` and the promise rejects
   with the thrown value, keeping module state. In a function without a
@@ -234,6 +237,35 @@ Modules call into the app through the `tauri:backend/host` interface
 | `log(level, message)`          | none (goes to the `log` crate)    |
 | `emit(event, payload)`         | `events.emit` matches the event   |
 | `invoke(command, args)`        | `hostCommands` matches the command|
+
+A module's memory is reset whenever it is reloaded (every hot reload) or
+traps. For what should outlive that, import the `tauri:backend/state`
+interface next to the base world: a key-value store of the module's own,
+kept by the app.
+
+```wit
+world counter {
+  include tauri:backend/module@0.1.0;
+  import tauri:backend/state@0.1.0;
+  export next: func() -> u32;
+}
+```
+
+| function             | capability needed          |
+|----------------------|----------------------------|
+| `get(key)`           | `state` matches the key    |
+| `set(key, value)`    | `state` matches the key    |
+| `remove(key)`        | `state` matches the key    |
+| `keys()`             | lists the keys `state` matches |
+
+Values are strings (at most 64 KiB; keys at most 256 bytes). Writes made
+during a call are kept when it returns and dropped if it traps, so a crash
+never leaves half an update behind. State is stored in
+`$APPDATA/wasm-backend/state`, one JSON file per module, so it survives
+restarting the app; change the directory with `"stateDir"` (or
+`Builder::state_dir`), or keep it elsewhere with `Builder::state_store`.
+From Rust, `app.wasm_backend().state(module)` reads a module's store and
+`clear_state(module)` wipes it (unloading a module keeps its state).
 
 Events named in `events.listen` (e.g. emitted by the frontend with
 `emit('app://ping', …)`) are delivered to the module's `on-event` export.
@@ -323,6 +355,7 @@ Modules are deny-by-default:
 ```jsonc
 "capabilities": {
   "hostCommands": ["app_version", "db_*"],   // `*` wildcards
+  "state": ["*"],                           // keys of its state store, `*` wildcards
   "events": {
     "emit": ["greeter://*"],
     "listen": ["app://ping"]                // exact names
@@ -335,9 +368,19 @@ Modules are deny-by-default:
   },
   "allowedHosts": ["api.example.com"],      // Extism HTTP only
   "memoryLimitMb": 64,
-  "timeoutMs": 1000
+  "timeoutMs": 1000,
+  "maxRestarts": 3                          // stop after the 4th trap, until reloaded
 }
 ```
+
+`listModules()` shows what each module holds and uses: its `capabilities`,
+the interfaces it imports (`requires`, WIT modules only), the SHA-256 of its
+bytes, how often it trapped (`traps`) and whether it was `stopped`.
+
+A WIT module doesn't need WASI. A Rust crate using `wit-bindgen` built with
+`cargo build --target wasm32-unknown-unknown` is loaded as a component too,
+and imports no `wasi:*` interface at all: the host API and the host commands
+it imports are everything it can reach.
 
 ### Frontend access
 
@@ -376,6 +419,25 @@ New files are loaded and deleted ones unloaded while the app runs (when hot
 reload is on). For finer control, e.g. per-plugin consent, use
 `app.wasm_backend().load(name, ModuleConfig::from_path(…).capabilities(…))`.
 
+To decide which plugins run at all, set a load gate. It is asked before any
+module is loaded or reloaded, and before a byte of it is compiled:
+
+```rust
+tauri_plugin_wasm_backend::Builder::new()
+    .load_gate(|app, request| {
+        if !request.external || approved(app).contains(request.sha256) {
+            Ok(())
+        } else {
+            Err("this plugin has not been approved".into())
+        }
+    })
+```
+
+A refused load is reported like any other load failure
+(`wasm-backend://module-error`); a refused reload keeps the previous version
+running. Give third-party plugins a `maxRestarts` so one that keeps crashing
+is stopped.
+
 ## Extism modules
 
 Core WASM modules use the Extism engine (or set `"engine": "extism"`). Each
@@ -388,6 +450,10 @@ call. Host functions take and return JSON strings:
 | `tauri_log`    | `{ level, message }`     | -                                         |
 | `tauri_emit`   | `{ event, payload }`     | `{ "ok": null }` or `{ "err": "…" }`      |
 | `tauri_invoke` | `{ command, args }`      | `{ "ok": result }` or `{ "err": "…" }`    |
+| `tauri_state_get`    | `{ key }`          | `{ "ok": value or null }` or `{ "err": "…" }` |
+| `tauri_state_set`    | `{ key, value }`   | `{ "ok": null }` or `{ "err": "…" }`      |
+| `tauri_state_remove` | `{ key }`          | `{ "ok": null }` or `{ "err": "…" }`      |
+| `tauri_state_keys`   | `{}`               | `{ "ok": [key, …] }` or `{ "err": "…" }`  |
 
 An exported `on_event` (or `onEvent`) receives `{ event, payload }`.
 
