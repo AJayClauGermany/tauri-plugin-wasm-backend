@@ -942,3 +942,70 @@ fn configuration_warnings() {
         .unwrap();
     assert!(info.warnings.is_empty(), "{:?}", info.warnings);
 }
+
+#[test]
+fn load_gate_and_restart_limit() {
+    let dir = temp_dir("gated");
+    copy(&extism(), &dir.join("approved.wasm"));
+    copy(&component(), &dir.join("unknown.wasm"));
+
+    let (tx, rx) = mpsc::channel();
+    let app = app(Builder::new()
+        .hot_reload(false)
+        .external(ExternalConfig {
+            dir: dir.clone(),
+            capabilities: Capabilities::default().max_restarts(0),
+            expose: false,
+            engine: EngineKind::Auto,
+        })
+        .load_gate(move |app, request| {
+            // The gate runs with the app, before the module is compiled.
+            assert_eq!(request.sha256.len(), 64);
+            assert!(request.external);
+            let _ = app.package_info();
+            tx.send(request.name.to_string()).unwrap();
+            if request.name == "approved" {
+                Ok(())
+            } else {
+                Err("this plugin has not been approved".to_string())
+            }
+        }));
+    let b = backend(&app);
+    let mut asked = [wait_for(&rx), wait_for(&rx)];
+    asked.sort();
+    assert_eq!(asked, ["approved", "unknown"]);
+    assert!(matches!(b.module("unknown"), Err(Error::ModuleNotFound(_))));
+
+    let info = b.module("approved").unwrap();
+    assert_eq!((info.traps, info.stopped), (0, false));
+    assert_eq!(info.sha256.len(), 64);
+
+    // With no restarts left, the first trap stops the plugin.
+    let (tx, rx) = mpsc::channel();
+    app.listen_any(tauri_plugin_wasm_backend::EVENT_MODULE_TRAPPED, move |e| {
+        tx.send(e.payload().to_string()).unwrap();
+    });
+    assert!(matches!(
+        b.invoke("approved", "crash", Value::Null),
+        Err(Error::Runtime(_))
+    ));
+    let trap: Value = serde_json::from_str(&wait_for(&rx)).unwrap();
+    assert_eq!(trap["module"], json!("approved"));
+    assert_eq!(
+        (&trap["traps"], &trap["stopped"]),
+        (&json!(1), &json!(true))
+    );
+    let err = b
+        .invoke("approved", "greet", json!({ "name": "x" }))
+        .unwrap_err();
+    assert!(matches!(err, Error::Stopped { traps: 1, .. }), "{err:?}");
+    assert!(b.module("approved").unwrap().stopped);
+
+    // A reload starts it again.
+    b.reload("approved").unwrap();
+    assert_eq!(
+        b.invoke("approved", "greet", json!({ "name": "again" }))
+            .unwrap(),
+        json!("Hello, again!")
+    );
+}

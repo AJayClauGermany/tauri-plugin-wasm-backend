@@ -32,6 +32,20 @@ export interface ModuleInfo {
   watched: boolean
   /** Incremented on every reload. */
   generation: number
+  /** SHA-256 of the module's bytes, in lowercase hex. */
+  sha256: string
+  /**
+   * Every interface the module imports, as it names them (WIT modules only):
+   * all it can reach outside its own memory.
+   */
+  requires: string[]
+  /** Calls that trapped since the module was last (re)loaded. */
+  traps: number
+  /**
+   * The module trapped more often than its `maxRestarts` capability allows:
+   * every call fails until it is reloaded.
+   */
+  stopped: boolean
   commands: CommandInfo[]
   /**
    * Host commands the module imports as typed WIT functions, named as
@@ -51,10 +65,20 @@ export interface ModuleError {
   error: string
 }
 
+export interface ModuleTrap {
+  module: string
+  error: string
+  /** Traps since the module was last (re)loaded, this one included. */
+  traps: number
+  /** Whether this trap stopped the module until it is reloaded. */
+  stopped: boolean
+}
+
 export const EVENT_MODULE_LOADED = 'wasm-backend://module-loaded'
 export const EVENT_MODULE_RELOADED = 'wasm-backend://module-reloaded'
 export const EVENT_MODULE_UNLOADED = 'wasm-backend://module-unloaded'
 export const EVENT_MODULE_ERROR = 'wasm-backend://module-error'
+export const EVENT_MODULE_TRAPPED = 'wasm-backend://module-trapped'
 
 /**
  * Invoke a command of a WASM backend module, the same way `invoke` calls a
@@ -138,4 +162,12 @@ export async function onModuleUnloaded(cb: (name: string) => void): Promise<Unli
 /** Called when a module fails to load or reload. */
 export async function onModuleError(cb: (error: ModuleError) => void): Promise<UnlistenFn> {
   return await listen<ModuleError>(EVENT_MODULE_ERROR, (e) => cb(e.payload))
+}
+
+/**
+ * Called when a call into a module traps (a panic, a timeout, running out of
+ * memory). `stopped` says whether the module now needs a reload.
+ */
+export async function onModuleTrapped(cb: (trap: ModuleTrap) => void): Promise<UnlistenFn> {
+  return await listen<ModuleTrap>(EVENT_MODULE_TRAPPED, (e) => cb(e.payload))
 }

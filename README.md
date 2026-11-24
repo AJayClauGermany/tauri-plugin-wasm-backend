@@ -212,7 +212,10 @@ and the frontend receives `wasm-backend://module-reloaded`
   `T | null`, enums are strings, variants are `{ tag, val }`, flags are arrays
   of names, `list<u8>` is an array of numbers.
 - A trap (panic, uncaught JS exception, timeout, out of memory) rejects the
-  call; the module is re-instantiated (state reset) for the next call.
+  call; the module is re-instantiated (state reset) for the next call, and
+  `wasm-backend://module-trapped` is emitted (`onModuleTrapped`). With the
+  `maxRestarts` capability, a module that keeps trapping is stopped until it
+  is reloaded instead of being restarted forever.
   To return an error the frontend can handle, declare the function as
   `-> result<T, E>`: a JS `throw` then becomes `err` and the promise rejects
   with the thrown value, keeping module state. In a function without a
@@ -335,9 +338,19 @@ Modules are deny-by-default:
   },
   "allowedHosts": ["api.example.com"],      // Extism HTTP only
   "memoryLimitMb": 64,
-  "timeoutMs": 1000
+  "timeoutMs": 1000,
+  "maxRestarts": 3                          // stop after the 4th trap, until reloaded
 }
 ```
+
+`listModules()` shows what each module holds and uses: its `capabilities`,
+the interfaces it imports (`requires`, WIT modules only), the SHA-256 of its
+bytes, how often it trapped (`traps`) and whether it was `stopped`.
+
+A WIT module doesn't need WASI. A Rust crate using `wit-bindgen` built with
+`cargo build --target wasm32-unknown-unknown` is loaded as a component too,
+and imports no `wasi:*` interface at all: the host API and the host commands
+it imports are everything it can reach.
 
 ### Frontend access
 
@@ -375,6 +388,25 @@ Let users extend your app with WASM plugins dropped into a directory:
 New files are loaded and deleted ones unloaded while the app runs (when hot
 reload is on). For finer control, e.g. per-plugin consent, use
 `app.wasm_backend().load(name, ModuleConfig::from_path(…).capabilities(…))`.
+
+To decide which plugins run at all, set a load gate. It is asked before any
+module is loaded or reloaded, and before a byte of it is compiled:
+
+```rust
+tauri_plugin_wasm_backend::Builder::new()
+    .load_gate(|app, request| {
+        if !request.external || approved(app).contains(request.sha256) {
+            Ok(())
+        } else {
+            Err("this plugin has not been approved".into())
+        }
+    })
+```
+
+A refused load is reported like any other load failure
+(`wasm-backend://module-error`); a refused reload keeps the previous version
+running. Give third-party plugins a `maxRestarts` so one that keeps crashing
+is stopped.
 
 ## Extism modules
 

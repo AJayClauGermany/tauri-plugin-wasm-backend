@@ -41,11 +41,11 @@
 //! // tauri::Builder::default().plugin(plugin)
 //! ```
 
-use std::{collections::HashMap, fmt::Display, path::PathBuf};
+use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc};
 
 use serde::{Serialize, de::DeserializeOwned};
-use tauri::{Manager, Runtime, Wry, plugin::TauriPlugin};
-use wasm_backend_core::{Backend, HostCall, HostCommandFn, TypeScriptOptions};
+use tauri::{AppHandle, Manager, Runtime, Wry, plugin::TauriPlugin};
+use wasm_backend_core::{Backend, HostCall, HostCommandFn, LoadGate, TypeScriptOptions};
 
 mod backend;
 mod commands;
@@ -56,8 +56,9 @@ pub use commands::InvokeScope;
 pub use error::{Error, Result};
 pub use wasm_backend_core::{
     self, Capabilities, CommandInfo, Config, EVENT_MODULE_ERROR, EVENT_MODULE_LOADED,
-    EVENT_MODULE_RELOADED, EVENT_MODULE_UNLOADED, EngineKind, EventCapabilities, ExternalConfig,
-    ModuleConfig, ModuleError, ModuleInfo, ParamInfo, Preopen, WasiCapabilities,
+    EVENT_MODULE_RELOADED, EVENT_MODULE_TRAPPED, EVENT_MODULE_UNLOADED, EngineKind,
+    EventCapabilities, ExternalConfig, LoadRequest, ModuleConfig, ModuleError, ModuleInfo,
+    ModuleTrap, ParamInfo, Preopen, WasiCapabilities,
 };
 
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`] and [`tauri::Window`]
@@ -79,6 +80,7 @@ pub struct Builder<R: Runtime = Wry> {
     config: Config,
     host_commands: HashMap<String, HostCommandFn<TauriPlatform<R>>>,
     typescript_out_dir: Option<PathBuf>,
+    load_gate: Option<LoadGate<TauriPlatform<R>>>,
 }
 
 impl<R: Runtime> Default for Builder<R> {
@@ -93,6 +95,7 @@ impl<R: Runtime> Builder<R> {
             config: Config::default(),
             host_commands: HashMap::new(),
             typescript_out_dir: None,
+            load_gate: None,
         }
     }
 
@@ -153,11 +156,34 @@ impl<R: Runtime> Builder<R> {
         self
     }
 
+    /// Ask `gate` before any module is loaded or reloaded: app modules,
+    /// external plugins and [`WasmBackend::load`] alike. It sees the
+    /// module's name, path, capabilities and the SHA-256 of its bytes (see
+    /// [`LoadRequest`]) before any of it is compiled; returning
+    /// `Err(reason)` refuses the load.
+    ///
+    /// Use it to decide which third-party plugins run, e.g. by checking
+    /// [`LoadRequest::sha256`] against the plugins the user approved. The
+    /// same file may be asked about more than once, so remember the answer.
+    pub fn load_gate<F>(mut self, gate: F) -> Self
+    where
+        F: Fn(&AppHandle<R>, &LoadRequest<'_>) -> std::result::Result<(), String>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.load_gate = Some(Arc::new(move |platform: &TauriPlatform<R>, request| {
+            gate(platform.app(), request)
+        }));
+        self
+    }
+
     pub fn build(self) -> TauriPlugin<R, Option<Config>> {
         let Builder {
             config: builder_config,
             host_commands,
             typescript_out_dir,
+            load_gate,
         } = self;
         tauri::plugin::Builder::<R, Option<Config>>::new("wasm-backend")
             .invoke_handler(tauri::generate_handler![
@@ -199,6 +225,9 @@ impl<R: Runtime> Builder<R> {
                     });
                 for (name, f) in host_commands {
                     core = core.host_command_fn(name, f);
+                }
+                if let Some(gate) = load_gate {
+                    core = core.load_gate(move |platform, request| gate(platform, request));
                 }
                 let backend = WasmBackend(core.build()?);
                 // Managed before modules load so host commands and event

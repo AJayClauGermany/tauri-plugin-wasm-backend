@@ -29,6 +29,10 @@ pub enum Error {
     /// output.
     #[error("WASM runtime error: {0}")]
     Runtime(String),
+    /// The module trapped more often than its `maxRestarts` capability
+    /// allows and stays stopped until it is reloaded.
+    #[error("WASM module `{module}` was stopped after trapping {traps} times and must be reloaded")]
+    Stopped { module: String, traps: u32 },
     #[error("{0}")]
     NotAllowed(String),
     #[error(
@@ -57,6 +61,7 @@ impl From<wasm_backend_core::Error> for Error {
             Core::InvalidArgs { command, message } => Error::InvalidArgs { command, message },
             Core::Command(v) => Error::Command(v),
             Core::Runtime(m) => Error::Runtime(m),
+            Core::Stopped { module, traps } => Error::Stopped { module, traps },
             Core::NotAllowed(m) => Error::NotAllowed(m),
             Core::Reentrant(m) => Error::Reentrant(m),
             Core::EngineDisabled(e) => Error::EngineDisabled(e),
