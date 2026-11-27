@@ -7,7 +7,7 @@ use tauri::{
 
 use wasm_backend_core::{name_matches, wildcard_match};
 
-use crate::{Error, ModuleInfo, Result, WasmBackendExt};
+use crate::{Error, InactiveModule, ModuleInfo, Result, WasmBackendExt};
 
 /// Scope entry of the `invoke` command, used in capability files to restrict
 /// which modules and commands the frontend may call:
@@ -95,20 +95,92 @@ pub(crate) async fn invoke<R: Runtime>(
         .await
 }
 
+/// Scope entry of the commands that manage modules (`reload-module`,
+/// `enable-module`, `disable-module`), used in capability files to restrict
+/// which modules a window may manage:
+///
+/// ```json
+/// {
+///   "identifier": "wasm-backend:allow-disable-module",
+///   "allow": [{ "module": "plugin-*" }],
+///   "deny": [{ "module": "plugin-core" }]
+/// }
+/// ```
+///
+/// `module` supports `*` wildcards. Without `allow` entries the command
+/// works on every module; `deny` entries always win.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModuleScope {
+    pub module: String,
+}
+
+/// Unlike `invoke`, these commands are off unless a capability allows them,
+/// so allowing one without a scope means all modules.
+fn check_module_scope(allows: &[&ModuleScope], denies: &[&ModuleScope], module: &str) -> bool {
+    let matches = |s: &&ModuleScope| wildcard_match(&s.module, module);
+    !denies.iter().any(matches) && (allows.is_empty() || allows.iter().any(matches))
+}
+
+fn manage(scope: &CommandScope<ModuleScope>, action: &str, module: &str) -> Result<()> {
+    let allows: Vec<&ModuleScope> = scope.allows().iter().map(|s| s.as_ref()).collect();
+    let denies: Vec<&ModuleScope> = scope.denies().iter().map(|s| s.as_ref()).collect();
+    if check_module_scope(&allows, &denies, module) {
+        Ok(())
+    } else {
+        Err(Error::NotAllowed(format!(
+            "{action} `{module}` is not allowed by the scope of this command"
+        )))
+    }
+}
+
+/// Run blocking work (compiling a module) off the IPC thread.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| Error::Runtime(e.to_string()))?
+}
+
 #[command]
 pub(crate) fn list_modules<R: Runtime>(app: AppHandle<R>) -> Vec<ModuleInfo> {
     app.wasm_backend().modules()
 }
 
 #[command]
+pub(crate) fn list_inactive_modules<R: Runtime>(app: AppHandle<R>) -> Vec<InactiveModule> {
+    app.wasm_backend().inactive()
+}
+
+#[command]
 pub(crate) async fn reload_module<R: Runtime>(
     app: AppHandle<R>,
+    command_scope: CommandScope<ModuleScope>,
     module: String,
 ) -> Result<ModuleInfo> {
+    manage(&command_scope, "reloading", &module)?;
     let backend = app.wasm_backend().clone();
-    tauri::async_runtime::spawn_blocking(move || backend.reload(&module))
-        .await
-        .map_err(|e| Error::Runtime(e.to_string()))?
+    blocking(move || backend.reload(&module)).await
+}
+
+#[command]
+pub(crate) async fn enable_module<R: Runtime>(
+    app: AppHandle<R>,
+    command_scope: CommandScope<ModuleScope>,
+    module: String,
+) -> Result<ModuleInfo> {
+    manage(&command_scope, "enabling", &module)?;
+    let backend = app.wasm_backend().clone();
+    blocking(move || backend.enable(&module)).await
+}
+
+#[command]
+pub(crate) fn disable_module<R: Runtime>(
+    app: AppHandle<R>,
+    command_scope: CommandScope<ModuleScope>,
+    module: String,
+) -> Result<()> {
+    manage(&command_scope, "disabling", &module)?;
+    app.wasm_backend().disable(&module)
 }
 
 #[command]
@@ -125,6 +197,26 @@ mod tests {
             module: module.into(),
             command: command.map(Into::into),
         }
+    }
+
+    #[test]
+    fn module_scopes() {
+        let plugins = ModuleScope {
+            module: "plugin-*".into(),
+        };
+        let core = ModuleScope {
+            module: "plugin-core".into(),
+        };
+        // Allowed without a scope: every module.
+        assert!(check_module_scope(&[], &[], "greeter"));
+        // Allow entries narrow it down, deny entries win.
+        assert!(check_module_scope(&[&plugins], &[], "plugin-notes"));
+        assert!(!check_module_scope(&[&plugins], &[], "greeter"));
+        assert!(!check_module_scope(&[&plugins], &[&core], "plugin-core"));
+        assert!(!check_module_scope(&[], &[&core], "plugin-core"));
+        assert!(check_module_scope(&[], &[&core], "greeter"));
+        // A typo in an entry is an error, not a scope that matches nothing.
+        assert!(serde_json::from_str::<ModuleScope>(r#"{ "modul": "x" }"#).is_err());
     }
 
     #[test]

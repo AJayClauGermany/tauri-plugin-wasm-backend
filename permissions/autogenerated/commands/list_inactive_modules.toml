@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-list-inactive-modules"
+description = "Enables the list_inactive_modules command without any pre-configured scope."
+commands.allow = ["list_inactive_modules"]
+
+[[permission]]
+identifier = "deny-list-inactive-modules"
+description = "Denies the list_inactive_modules command without any pre-configured scope."
+commands.deny = ["list_inactive_modules"]

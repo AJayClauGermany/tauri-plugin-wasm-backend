@@ -27,7 +27,7 @@ specta = ["wasm-backend-core/specta"]
 [dependencies]
 # Engines, capabilities, registry and hot reload, shared with non-Tauri hosts.
 # Pulled from git until wasm-backend-core is published on crates.io.
-wasm-backend-core = { version = "0.1.0", git = "https://github.com/AJayClauGermany/rust-wasm-core-interchange", rev = "d5555795421547f0366feedbb931fba64d843075", default-features = false }
+wasm-backend-core = { version = "0.1.0", git = "https://github.com/AJayClauGermany/rust-wasm-core-interchange", rev = "051d92319ff834b97867d6f6571b0fabe6d248c6", default-features = false }
 tauri = { version = "2.12.5" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"

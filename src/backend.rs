@@ -4,14 +4,17 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, EventId, Listener, Manager, Runtime, path::BaseDirectory};
-use wasm_backend_core::{Backend, BaseDir, EventHandler, ModuleConfig, ModuleInfo, Platform};
+use wasm_backend_core::{
+    Backend, BaseDir, EventHandler, InactiveModule, ModuleConfig, ModuleInfo, Platform,
+};
 
-use crate::{Error, Result};
+use crate::{Error, Result, disabled::Disabled};
 
 /// Runs the registry on top of a Tauri app: module events are Tauri events,
 /// `$APPDATA`-style paths use Tauri's path resolver and blocking work runs
@@ -81,11 +84,15 @@ pub struct HostCallContext<R: Runtime> {
 
 /// Access to the WASM backend. Get it with
 /// [`WasmBackendExt::wasm_backend`](crate::WasmBackendExt::wasm_backend).
-pub struct WasmBackend<R: Runtime>(pub(crate) Backend<TauriPlatform<R>>);
+pub struct WasmBackend<R: Runtime>(
+    pub(crate) Backend<TauriPlatform<R>>,
+    /// The modules to keep switched off between runs, if the app opted in.
+    pub(crate) Option<Arc<Disabled>>,
+);
 
 impl<R: Runtime> Clone for WasmBackend<R> {
     fn clone(&self) -> Self {
-        Self(self.0.clone())
+        Self(self.0.clone(), self.1.clone())
     }
 }
 
@@ -130,9 +137,53 @@ impl<R: Runtime> WasmBackend<R> {
         Ok(self.0.send_event(module, event, payload)?)
     }
 
-    /// Information about every loaded module.
+    /// Information about every loaded module. [`WasmBackend::inactive`]
+    /// lists the ones that are not.
     pub fn modules(&self) -> Vec<ModuleInfo> {
         self.0.modules()
+    }
+
+    /// Every module that is known but not running, and why: switched off,
+    /// refused (by the load gate, the external plugins' `allow` and `deny`
+    /// lists or its `sha256`) or failed to load. Each entry has the
+    /// module's hash and the capabilities it would get, which is what a
+    /// plugin manager shows before asking the user.
+    pub fn inactive(&self) -> Vec<InactiveModule> {
+        self.0.inactive()
+    }
+
+    /// Switch a module off: it is unloaded and stays that way, an external
+    /// plugin too, until [`WasmBackend::enable`] is called. Its state is
+    /// kept.
+    ///
+    /// This lasts until the app exits, and the app decides what to do the
+    /// next time it starts: remember the user's choice and call this again,
+    /// or set `"enabled": false` in the module's configuration. With
+    /// [`Builder::remember_disabled`](crate::Builder::remember_disabled)
+    /// the plugin remembers it instead, and the module stays off between
+    /// runs until [`WasmBackend::enable`] is called.
+    pub fn disable(&self, name: &str) -> Result<()> {
+        self.0.disable(name)?;
+        if let Some(remembered) = &self.1 {
+            remembered.set(name, true)?;
+        }
+        Ok(())
+    }
+
+    /// Load a module [`WasmBackend::inactive`] lists: one that was switched
+    /// off, or one that was refused or failed and should be tried again
+    /// (e.g. after the user approved it). The load gate is asked as for any
+    /// load.
+    pub fn enable(&self, name: &str) -> Result<ModuleInfo> {
+        let result = self.0.enable(name);
+        // Switching it on is the choice to remember, whether or not the
+        // module could be loaded this time.
+        if let Some(remembered) = &self.1
+            && !matches!(result, Err(wasm_backend_core::Error::ModuleNotFound(_)))
+        {
+            remembered.set(name, false)?;
+        }
+        Ok(result?)
     }
 
     /// Information about one module.
@@ -152,7 +203,9 @@ impl<R: Runtime> WasmBackend<R> {
         Ok(self.0.load(name, config)?)
     }
 
-    /// Unload a module.
+    /// Unload a module and forget it. An external plugin whose file is
+    /// still there is loaded again by the next scan of the plugins
+    /// directory; use [`WasmBackend::disable`] to keep one off.
     pub fn unload(&self, name: &str) -> Result<()> {
         Ok(self.0.unload(name)?)
     }

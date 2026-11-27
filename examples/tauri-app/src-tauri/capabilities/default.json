@@ -8,7 +8,7 @@
   "permissions": [
     "core:default",
     "wasm-backend:default",
-    "wasm-backend:allow-reload-module",
+    "wasm-backend:manage-modules",
     {
       "identifier": "wasm-backend:allow-invoke",
       "allow": [

@@ -1,0 +1,20 @@
+"$schema" = "schemas/schema.json"
+
+[[set]]
+identifier = "manage-modules"
+description = """
+Allows a window to manage modules, e.g. a plugin manager in the app's
+settings: list the modules that are and are not running, switch modules off
+and on, and reload them.
+
+Not part of the default permission set. The load gate and the external
+plugins' allow and deny lists still decide what may load. To limit which
+modules a window may manage, allow the single commands with a scope instead.
+"""
+permissions = [
+  "allow-list-modules",
+  "allow-list-inactive-modules",
+  "allow-enable-module",
+  "allow-disable-module",
+  "allow-reload-module",
+]
