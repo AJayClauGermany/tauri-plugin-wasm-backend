@@ -3,7 +3,7 @@ description = """
 Allows the frontend to invoke WASM backend modules and list them.
 
 App modules are invocable unless their config sets `expose: false`; external
-plugins need an explicit `allow-invoke` scope entry. Reloading modules and
-generating TypeScript bindings are not included.
+plugins need an explicit `allow-invoke` scope entry. Managing modules (see
+`manage-modules`) and generating TypeScript bindings are not included.
 """
 permissions = ["allow-invoke", "allow-list-modules"]

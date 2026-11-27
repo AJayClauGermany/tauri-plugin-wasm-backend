@@ -9,7 +9,9 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, EventId, Listener, Manager, Runtime, path::BaseDirectory};
-use wasm_backend_core::{Backend, BaseDir, EventHandler, ModuleConfig, ModuleInfo, Platform};
+use wasm_backend_core::{
+    Backend, BaseDir, EventHandler, InactiveModule, ModuleConfig, ModuleInfo, Platform,
+};
 
 use crate::{Error, Result};
 
@@ -130,9 +132,38 @@ impl<R: Runtime> WasmBackend<R> {
         Ok(self.0.send_event(module, event, payload)?)
     }
 
-    /// Information about every loaded module.
+    /// Information about every loaded module. [`WasmBackend::inactive`]
+    /// lists the ones that are not.
     pub fn modules(&self) -> Vec<ModuleInfo> {
         self.0.modules()
+    }
+
+    /// Every module that is known but not running, and why: switched off,
+    /// refused (by the load gate, the external plugins' `allow` and `deny`
+    /// lists or its `sha256`) or failed to load. Each entry has the
+    /// module's hash and the capabilities it would get, which is what a
+    /// plugin manager shows before asking the user.
+    pub fn inactive(&self) -> Vec<InactiveModule> {
+        self.0.inactive()
+    }
+
+    /// Switch a module off: it is unloaded and stays that way, an external
+    /// plugin too, until [`WasmBackend::enable`] is called. Its state is
+    /// kept.
+    ///
+    /// This lasts until the app exits. To keep a module off between runs,
+    /// remember the user's choice and call this at startup, or set
+    /// `"enabled": false` in its configuration.
+    pub fn disable(&self, name: &str) -> Result<()> {
+        Ok(self.0.disable(name)?)
+    }
+
+    /// Load a module [`WasmBackend::inactive`] lists: one that was switched
+    /// off, or one that was refused or failed and should be tried again
+    /// (e.g. after the user approved it). The load gate is asked as for any
+    /// load.
+    pub fn enable(&self, name: &str) -> Result<ModuleInfo> {
+        Ok(self.0.enable(name)?)
     }
 
     /// Information about one module.
@@ -152,7 +183,9 @@ impl<R: Runtime> WasmBackend<R> {
         Ok(self.0.load(name, config)?)
     }
 
-    /// Unload a module.
+    /// Unload a module and forget it. An external plugin whose file is
+    /// still there is loaded again by the next scan of the plugins
+    /// directory; use [`WasmBackend::disable`] to keep one off.
     pub fn unload(&self, name: &str) -> Result<()> {
         Ok(self.0.unload(name)?)
     }

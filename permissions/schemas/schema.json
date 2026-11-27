@@ -295,6 +295,30 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the disable_module command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-disable-module",
+          "markdownDescription": "Enables the disable_module command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the disable_module command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-disable-module",
+          "markdownDescription": "Denies the disable_module command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the enable_module command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-enable-module",
+          "markdownDescription": "Enables the enable_module command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the enable_module command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-enable-module",
+          "markdownDescription": "Denies the enable_module command without any pre-configured scope."
+        },
+        {
           "description": "Enables the invoke command without any pre-configured scope.",
           "type": "string",
           "const": "allow-invoke",
@@ -305,6 +329,18 @@
           "type": "string",
           "const": "deny-invoke",
           "markdownDescription": "Denies the invoke command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_inactive_modules command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-inactive-modules",
+          "markdownDescription": "Enables the list_inactive_modules command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_inactive_modules command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-inactive-modules",
+          "markdownDescription": "Denies the list_inactive_modules command without any pre-configured scope."
         },
         {
           "description": "Enables the list_modules command without any pre-configured scope.",
@@ -343,10 +379,16 @@
           "markdownDescription": "Denies the typescript command without any pre-configured scope."
         },
         {
-          "description": "Allows the frontend to invoke WASM backend modules and list them.\n\nApp modules are invocable unless their config sets `expose: false`; external\nplugins need an explicit `allow-invoke` scope entry. Reloading modules and\ngenerating TypeScript bindings are not included.\n\n#### This default permission set includes:\n\n- `allow-invoke`\n- `allow-list-modules`",
+          "description": "Allows the frontend to invoke WASM backend modules and list them.\n\nApp modules are invocable unless their config sets `expose: false`; external\nplugins need an explicit `allow-invoke` scope entry. Managing modules (see\n`manage-modules`) and generating TypeScript bindings are not included.\n\n#### This default permission set includes:\n\n- `allow-invoke`\n- `allow-list-modules`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows the frontend to invoke WASM backend modules and list them.\n\nApp modules are invocable unless their config sets `expose: false`; external\nplugins need an explicit `allow-invoke` scope entry. Reloading modules and\ngenerating TypeScript bindings are not included.\n\n#### This default permission set includes:\n\n- `allow-invoke`\n- `allow-list-modules`"
+          "markdownDescription": "Allows the frontend to invoke WASM backend modules and list them.\n\nApp modules are invocable unless their config sets `expose: false`; external\nplugins need an explicit `allow-invoke` scope entry. Managing modules (see\n`manage-modules`) and generating TypeScript bindings are not included.\n\n#### This default permission set includes:\n\n- `allow-invoke`\n- `allow-list-modules`"
+        },
+        {
+          "description": "Allows a window to manage modules, e.g. a plugin manager in the app's\nsettings: list the modules that are and are not running, switch modules off\nand on, and reload them.\n\nNot part of the default permission set. The load gate and the external\nplugins' allow and deny lists still decide what may load. To limit which\nmodules a window may manage, allow the single commands with a scope instead.\n\n#### This permission set includes:\n\n- `allow-list-modules`\n- `allow-list-inactive-modules`\n- `allow-enable-module`\n- `allow-disable-module`\n- `allow-reload-module`",
+          "type": "string",
+          "const": "manage-modules",
+          "markdownDescription": "Allows a window to manage modules, e.g. a plugin manager in the app's\nsettings: list the modules that are and are not running, switch modules off\nand on, and reload them.\n\nNot part of the default permission set. The load gate and the external\nplugins' allow and deny lists still decide what may load. To limit which\nmodules a window may manage, allow the single commands with a scope instead.\n\n#### This permission set includes:\n\n- `allow-list-modules`\n- `allow-list-inactive-modules`\n- `allow-enable-module`\n- `allow-disable-module`\n- `allow-reload-module`"
         }
       ]
     }

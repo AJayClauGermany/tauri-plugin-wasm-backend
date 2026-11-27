@@ -20,6 +20,31 @@ export interface CommandInfo {
   result: string | null
 }
 
+/** What a module is allowed to do. See "Capabilities" in the README. */
+export interface Capabilities {
+  /** Host commands it may invoke. `*` wildcards; `!` entries deny. */
+  hostCommands: string[]
+  events: {
+    /** Events it may emit. `*` wildcards; `!` entries deny. */
+    emit: string[]
+    /** Events delivered to it. */
+    listen: string[]
+  }
+  /** Keys of its state store it may use. `*` wildcards; `!` entries deny. */
+  state: string[]
+  wasi: {
+    stdio: boolean
+    env: Record<string, string>
+    preopens: Array<{ host: string; guest: string; readOnly: boolean }>
+    network: boolean
+  }
+  /** Hosts it may reach over HTTP (Extism modules). */
+  allowedHosts: string[]
+  memoryLimitMb: number | null
+  timeoutMs: number | null
+  maxRestarts: number | null
+}
+
 export interface ModuleInfo {
   name: string
   engine: EngineKind
@@ -52,12 +77,34 @@ export interface ModuleInfo {
    * registered. Checked when the module loads.
    */
   imports: CommandInfo[]
-  capabilities: Record<string, unknown>
+  capabilities: Capabilities
   /**
    * Likely configuration mistakes found when the module was (re)loaded, e.g.
    * a `hostCommands` entry matching no registered host command.
    */
   warnings: string[]
+}
+
+/**
+ * Why a module is not running: switched off, refused (by the app's load
+ * gate, the external plugins' allow and deny lists or a pinned hash) or
+ * failed to load.
+ */
+export type InactiveReason = 'disabled' | 'denied' | 'failed'
+
+/** A module the app knows but isn't running. */
+export interface InactiveModule {
+  name: string
+  path: string | null
+  /** Found in the external plugins directory. */
+  external: boolean
+  /** SHA-256 of its bytes in lowercase hex, when they were read. */
+  sha256: string | null
+  reason: InactiveReason
+  /** The reason in words: the load gate's answer, the load error, … */
+  message: string
+  /** What it would be allowed to do if it ran. */
+  capabilities: Capabilities
 }
 
 export interface ModuleError {
@@ -124,6 +171,34 @@ export function module<T extends object = Record<string, (args?: unknown) => Pro
 /** List the loaded modules and their commands. */
 export async function listModules(): Promise<ModuleInfo[]> {
   return await invoke<ModuleInfo[]>('plugin:wasm-backend|list_modules')
+}
+
+/**
+ * List the modules that are known but not running, and why. Together with
+ * {@link listModules} this is every module the app has. Requires the
+ * `wasm-backend:allow-list-inactive-modules` permission.
+ */
+export async function listInactiveModules(): Promise<InactiveModule[]> {
+  return await invoke<InactiveModule[]>('plugin:wasm-backend|list_inactive_modules')
+}
+
+/**
+ * Load a module {@link listInactiveModules} lists: one that was switched
+ * off, or one that was refused or failed and should be tried again. The app
+ * still decides whether it may load. Requires the
+ * `wasm-backend:allow-enable-module` permission.
+ */
+export async function enableModule(name: string): Promise<ModuleInfo> {
+  return await invoke<ModuleInfo>('plugin:wasm-backend|enable_module', { module: name })
+}
+
+/**
+ * Switch a module off until it is enabled again (or the app restarts); its
+ * state is kept. Requires the `wasm-backend:allow-disable-module`
+ * permission.
+ */
+export async function disableModule(name: string): Promise<void> {
+  await invoke('plugin:wasm-backend|disable_module', { module: name })
 }
 
 /**

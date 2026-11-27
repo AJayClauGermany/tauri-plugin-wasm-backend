@@ -54,13 +54,14 @@ mod commands;
 mod error;
 
 pub use backend::{HostCallContext, TauriPlatform, WasmBackend};
-pub use commands::InvokeScope;
+pub use commands::{InvokeScope, ModuleScope};
 pub use error::{Error, Result};
 pub use wasm_backend_core::{
     self, Capabilities, CommandInfo, Config, EVENT_MODULE_ERROR, EVENT_MODULE_LOADED,
     EVENT_MODULE_RELOADED, EVENT_MODULE_TRAPPED, EVENT_MODULE_UNLOADED, EngineKind,
-    EventCapabilities, ExternalConfig, FileStateStore, LoadRequest, ModuleConfig, ModuleError,
-    ModuleInfo, ModuleTrap, ParamInfo, Preopen, StateStore, WasiCapabilities,
+    EventCapabilities, ExternalConfig, ExternalPluginConfig, FileStateStore, InactiveModule,
+    InactiveReason, Limits, LoadRequest, ModuleConfig, ModuleError, ModuleInfo, ModuleTrap,
+    ParamInfo, Preopen, StateStore, WasiCapabilities,
 };
 
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`] and [`tauri::Window`]
@@ -80,6 +81,7 @@ impl<R: Runtime, T: Manager<R>> WasmBackendExt<R> for T {
 /// registered here win on name conflicts).
 pub struct Builder<R: Runtime = Wry> {
     config: Config,
+    limits: Option<Limits>,
     host_commands: HashMap<String, HostCommandFn<TauriPlatform<R>>>,
     typescript_out_dir: Option<PathBuf>,
     load_gate: Option<LoadGate<TauriPlatform<R>>>,
@@ -119,6 +121,7 @@ impl<R: Runtime> Builder<R> {
     pub fn new() -> Self {
         Self {
             config: Config::default(),
+            limits: None,
             host_commands: HashMap::new(),
             typescript_out_dir: None,
             load_gate: None,
@@ -132,9 +135,20 @@ impl<R: Runtime> Builder<R> {
         self
     }
 
-    /// Load third-party plugins from a directory.
+    /// Load third-party plugins from a directory:
+    /// `ExternalConfig::new("$APPDATA/plugins")`, with the capabilities
+    /// every plugin gets, `allow` and `deny` lists of plugin names, and
+    /// settings for single plugins.
     pub fn external(mut self, config: ExternalConfig) -> Self {
         self.config.external = Some(config);
+        self
+    }
+
+    /// Resource limits (memory, time per call, restarts) for every module
+    /// that doesn't set its own in its capabilities: app modules, external
+    /// plugins and modules loaded at runtime alike.
+    pub fn limits(mut self, limits: Limits) -> Self {
+        self.limits = Some(limits);
         self
     }
 
@@ -224,6 +238,7 @@ impl<R: Runtime> Builder<R> {
     pub fn build(self) -> TauriPlugin<R, Option<Config>> {
         let Builder {
             config: builder_config,
+            limits,
             host_commands,
             typescript_out_dir,
             load_gate,
@@ -233,7 +248,10 @@ impl<R: Runtime> Builder<R> {
             .invoke_handler(tauri::generate_handler![
                 commands::invoke,
                 commands::list_modules,
+                commands::list_inactive_modules,
                 commands::reload_module,
+                commands::enable_module,
+                commands::disable_module,
                 commands::typescript,
             ])
             .setup(move |app, api| {
@@ -247,6 +265,9 @@ impl<R: Runtime> Builder<R> {
                 }
                 if builder_config.state_dir.is_some() {
                     config.state_dir = builder_config.state_dir;
+                }
+                if let Some(limits) = limits {
+                    config.limits = limits;
                 }
                 let hot_reload = config.hot_reload.unwrap_or(cfg!(debug_assertions));
                 if hot_reload && !cfg!(feature = "hot-reload") {
@@ -281,6 +302,7 @@ impl<R: Runtime> Builder<R> {
                     .dev(cfg!(debug_assertions))
                     .hot_reload(hot_reload)
                     .external(config.external.clone())
+                    .limits(config.limits.clone())
                     .typescript_out_dir(typescript_dir)
                     .typescript_options(TypeScriptOptions {
                         generator: "tauri-plugin-wasm-backend".into(),

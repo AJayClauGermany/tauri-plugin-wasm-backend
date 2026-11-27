@@ -81,6 +81,9 @@
           }
         }
       },
+      "limits": {
+        "timeoutMs": 5000
+      },
       "typescriptOutDir": "../src/lib/wasm"
     }
   }

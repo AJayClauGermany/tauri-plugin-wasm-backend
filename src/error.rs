@@ -33,6 +33,11 @@ pub enum Error {
     /// allows and stays stopped until it is reloaded.
     #[error("WASM module `{module}` was stopped after trapping {traps} times and must be reloaded")]
     Stopped { module: String, traps: u32 },
+    /// The module is switched off (`"enabled": false`, or
+    /// [`WasmBackend::disable`](crate::WasmBackend::disable)) until it is
+    /// enabled.
+    #[error("WASM module `{0}` is disabled")]
+    Disabled(String),
     /// A module's state could not be read from or written to its store.
     #[error("WASM module state: {0}")]
     State(String),
@@ -65,6 +70,7 @@ impl From<wasm_backend_core::Error> for Error {
             Core::Command(v) => Error::Command(v),
             Core::Runtime(m) => Error::Runtime(m),
             Core::Stopped { module, traps } => Error::Stopped { module, traps },
+            Core::Disabled(m) => Error::Disabled(m),
             Core::State(m) => Error::State(m),
             Core::NotAllowed(m) => Error::NotAllowed(m),
             Core::Reentrant(m) => Error::Reentrant(m),

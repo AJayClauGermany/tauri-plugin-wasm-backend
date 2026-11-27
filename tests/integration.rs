@@ -13,8 +13,8 @@ use std::{
 use serde_json::{Value, json};
 use tauri::{Listener, Manager, test::MockRuntime};
 use tauri_plugin_wasm_backend::{
-    Builder, Capabilities, EngineKind, Error, ExternalConfig, ModuleConfig, WasmBackend,
-    WasmBackendExt,
+    Builder, Capabilities, EngineKind, Error, ExternalConfig, ExternalPluginConfig, InactiveReason,
+    Limits, ModuleConfig, WasmBackend, WasmBackendExt,
 };
 
 fn root() -> PathBuf {
@@ -541,12 +541,9 @@ fn external_plugins() {
     let dir = temp_dir("external");
     copy(&extism(), &dir.join("third-party.wasm"));
 
-    let app = app(Builder::new().hot_reload(true).external(ExternalConfig {
-        dir: dir.clone(),
-        capabilities: Capabilities::default().allow_host_command("echo"),
-        expose: false,
-        engine: EngineKind::Auto,
-    }));
+    let app = app(Builder::new().hot_reload(true).external(
+        ExternalConfig::new(&dir).capabilities(Capabilities::default().allow_host_command("echo")),
+    ));
     let b = backend(&app);
     let info = b.module("third-party").unwrap();
     assert!(info.external);
@@ -594,12 +591,9 @@ fn external_plugins_dir_created_at_startup_is_watched() {
     let dir = temp_dir("external-missing");
     std::fs::remove_dir_all(&dir).unwrap();
 
-    let app = app(Builder::new().hot_reload(true).external(ExternalConfig {
-        dir: dir.clone(),
-        capabilities: Capabilities::default(),
-        expose: false,
-        engine: EngineKind::Auto,
-    }));
+    let app = app(Builder::new()
+        .hot_reload(true)
+        .external(ExternalConfig::new(&dir)));
     assert!(dir.is_dir());
     let (tx, rx) = mpsc::channel();
     app.listen_any(tauri_plugin_wasm_backend::EVENT_MODULE_LOADED, move |e| {
@@ -953,12 +947,7 @@ fn load_gate_and_restart_limit() {
     let (tx, rx) = mpsc::channel();
     let app = app(Builder::new()
         .hot_reload(false)
-        .external(ExternalConfig {
-            dir: dir.clone(),
-            capabilities: Capabilities::default().max_restarts(0),
-            expose: false,
-            engine: EngineKind::Auto,
-        })
+        .external(ExternalConfig::new(&dir).capabilities(Capabilities::default().max_restarts(0)))
         .load_gate(move |app, request| {
             // The gate runs with the app, before the module is compiled.
             assert_eq!(request.sha256.len(), 64);
@@ -976,6 +965,14 @@ fn load_gate_and_restart_limit() {
     asked.sort();
     assert_eq!(asked, ["approved", "unknown"]);
     assert!(matches!(b.module("unknown"), Err(Error::ModuleNotFound(_))));
+    // What the gate refused is listed with everything a user would be asked.
+    let inactive = b.inactive();
+    assert_eq!(inactive.len(), 1);
+    assert_eq!(inactive[0].name, "unknown");
+    assert_eq!(inactive[0].reason, InactiveReason::Denied);
+    assert!(inactive[0].message.contains("has not been approved"));
+    assert_eq!(inactive[0].sha256.as_deref().map(str::len), Some(64));
+    assert!(inactive[0].external);
 
     let info = b.module("approved").unwrap();
     assert_eq!((info.traps, info.stopped), (0, false));
@@ -1076,4 +1073,114 @@ fn module_state_survives_reloads_traps_and_restarts() {
     );
     b.clear_state("fixture").unwrap();
     assert_eq!(visits(&b), json!(1));
+}
+
+#[test]
+fn choosing_what_runs() {
+    let dir = temp_dir("chosen");
+    for name in ["notes", "weather", "legacy-sync"] {
+        copy(&extism(), &dir.join(format!("{name}.wasm")));
+    }
+    let app = app(Builder::new()
+        .hot_reload(false)
+        // Limits every module gets, wherever it comes from.
+        .limits(Limits::default().timeout_ms(60_000).max_restarts(3))
+        .module(
+            "greeter",
+            ModuleConfig::from_path(extism()).capabilities(
+                // Everything `echo`-like but one command, every event but one family.
+                caps()
+                    .allow_host_command("*")
+                    .deny_host_command("secret")
+                    .deny_emit("test://private/*"),
+            ),
+        )
+        .module("later", ModuleConfig::from_path(extism()).enabled(false))
+        .external(
+            ExternalConfig::new(&dir)
+                .capabilities(Capabilities::default().allow_emit("plugin://*"))
+                .deny("legacy-*")
+                .plugin(
+                    "weather",
+                    ExternalPluginConfig::default()
+                        .capabilities(Capabilities::default().allow_host_command("echo")),
+                ),
+        ));
+    let b = backend(&app);
+    let names = |b: &WasmBackend<MockRuntime>| -> Vec<String> {
+        b.modules().into_iter().map(|m| m.name).collect()
+    };
+    assert_eq!(names(&b), ["greeter", "notes", "weather"]);
+
+    // Deny entries take back what the wildcards grant.
+    let call = |command: &str| {
+        b.invoke(
+            "greeter",
+            "call_host",
+            json!({ "command": command, "args": null }),
+        )
+    };
+    assert_eq!(call("app_version").unwrap(), json!("1.0.0"));
+    assert!(
+        call("secret")
+            .unwrap_err()
+            .to_string()
+            .contains("not allowed")
+    );
+    let emit = |event: &str| {
+        b.invoke(
+            "greeter",
+            "emit_event",
+            json!({ "event": event, "payload": 1 }),
+        )
+    };
+    assert!(emit("test://public").is_ok());
+    assert!(emit("test://private/key").is_err());
+
+    // The shared limits reach every module without its own.
+    for info in b.modules() {
+        assert_eq!(info.capabilities.timeout_ms, Some(60_000), "{}", info.name);
+        assert_eq!(info.capabilities.max_restarts, Some(3), "{}", info.name);
+    }
+    // One plugin's capabilities replace the shared ones.
+    let weather = b.module("weather").unwrap();
+    assert_eq!(weather.capabilities.host_commands, ["echo"]);
+    assert!(weather.capabilities.events.emit.is_empty());
+    assert_eq!(
+        b.module("notes").unwrap().capabilities.events.emit,
+        ["plugin://*"]
+    );
+
+    // Everything that isn't running, and why.
+    let inactive = b.inactive();
+    let listed: Vec<_> = inactive
+        .iter()
+        .map(|m| (m.name.as_str(), m.reason))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("later", InactiveReason::Disabled),
+            ("legacy-sync", InactiveReason::Denied)
+        ]
+    );
+    assert!(matches!(
+        b.invoke("later", "count", Value::Null),
+        Err(Error::Disabled(_))
+    ));
+
+    // Switching modules on and off at runtime, external plugins included.
+    assert_eq!(b.enable("later").unwrap().name, "later");
+    let (tx, rx) = mpsc::channel();
+    app.listen_any(tauri_plugin_wasm_backend::EVENT_MODULE_UNLOADED, move |e| {
+        tx.send(e.payload().to_string()).unwrap();
+    });
+    b.disable("notes").unwrap();
+    assert_eq!(wait_for(&rx), r#""notes""#);
+    b.sync_external();
+    assert_eq!(names(&b), ["greeter", "later", "weather"]);
+    // The lists are the app's decision: `enable` doesn't get around them.
+    assert!(matches!(b.enable("legacy-sync"), Err(Error::NotAllowed(_))));
+    assert!(b.enable("notes").is_ok());
+    assert_eq!(b.inactive().len(), 1);
 }
