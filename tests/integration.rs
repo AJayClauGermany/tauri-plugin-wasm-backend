@@ -1184,3 +1184,71 @@ fn choosing_what_runs() {
     assert!(b.enable("notes").is_ok());
     assert_eq!(b.inactive().len(), 1);
 }
+
+#[test]
+fn disabled_modules_are_remembered_when_asked_to() {
+    let dir = temp_dir("remembered");
+    let plugins = dir.join("plugins");
+    std::fs::create_dir_all(&plugins).unwrap();
+    copy(&extism(), &plugins.join("notes.wasm"));
+    let start = |remember: bool| {
+        let builder = Builder::new()
+            .hot_reload(false)
+            .module("greeter", ModuleConfig::from_path(extism()))
+            .module("stats", ModuleConfig::from_path(extism()))
+            .external(ExternalConfig::new(&plugins));
+        app(if remember {
+            builder
+                .remember_disabled(true)
+                .disabled_file(dir.join("disabled.json"))
+        } else {
+            builder
+        })
+    };
+    let running = |b: &WasmBackend<MockRuntime>| -> Vec<String> {
+        b.modules().into_iter().map(|m| m.name).collect()
+    };
+    let off = |b: &WasmBackend<MockRuntime>| -> Vec<String> {
+        b.inactive().into_iter().map(|m| m.name).collect()
+    };
+
+    // By default nothing is kept: a new run starts from the configuration.
+    let first = start(false);
+    let b = backend(&first);
+    b.disable("greeter").unwrap();
+    assert_eq!(running(&b), ["notes", "stats"]);
+    assert!(!dir.join("disabled.json").exists());
+    drop((b, first));
+    let second = start(false);
+    assert_eq!(running(&backend(&second)), ["greeter", "notes", "stats"]);
+    drop(second);
+
+    // Opted in: an app module and an external plugin stay off.
+    let third = start(true);
+    let b = backend(&third);
+    b.disable("greeter").unwrap();
+    b.disable("notes").unwrap();
+    assert!(matches!(b.disable("nope"), Err(Error::ModuleNotFound(_))));
+    drop((b, third));
+    let fourth = start(true);
+    let b = backend(&fourth);
+    assert_eq!(running(&b), ["stats"]);
+    assert_eq!(off(&b), ["greeter", "notes"]);
+    assert!(
+        b.inactive()
+            .iter()
+            .all(|m| m.reason == InactiveReason::Disabled)
+    );
+    // Scanning the plugins directory doesn't bring the plugin back.
+    b.sync_external();
+    assert_eq!(running(&b), ["stats"]);
+
+    // Enabling is remembered the same way.
+    b.enable("notes").unwrap();
+    assert!(matches!(b.enable("nope"), Err(Error::ModuleNotFound(_))));
+    drop((b, fourth));
+    let fifth = start(true);
+    let b = backend(&fifth);
+    assert_eq!(running(&b), ["notes", "stats"]);
+    assert_eq!(off(&b), ["greeter"]);
+}

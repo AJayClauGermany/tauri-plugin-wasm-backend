@@ -500,9 +500,22 @@ could not be loaded; it is tried again when its file changes). Each entry
 carries the hash and the capabilities the module would get, which is what a
 plugin manager shows before asking the user.
 
-`disable` lasts until the app exits. To keep a module off between runs,
-store the user's choice with your settings and call `disable` at startup,
-or answer for it in the load gate.
+By default the plugin keeps nothing between runs: `disable` lasts until the
+app exits, and the app decides what the next run starts with. To keep a
+module off, either store the user's choice with your own settings and call
+`disable` at startup (or answer for it in the load gate), or let the plugin
+remember it:
+
+```rust
+tauri_plugin_wasm_backend::Builder::new().remember_disabled(true)
+```
+
+With that, a module switched off with `disable` (`disableModule`) is still
+off the next time the app starts, external plugins included, until `enable`
+switches it on again. The names are kept in
+`$APPDATA/wasm-backend/disabled.json` (change it with
+`Builder::disabled_file`), and a name in that file wins over `"enabled":
+true` in the configuration.
 
 ## Third-party plugins
 

@@ -51,6 +51,7 @@ use wasm_backend_core::{
 
 mod backend;
 mod commands;
+mod disabled;
 mod error;
 
 pub use backend::{HostCallContext, TauriPlatform, WasmBackend};
@@ -86,10 +87,16 @@ pub struct Builder<R: Runtime = Wry> {
     typescript_out_dir: Option<PathBuf>,
     load_gate: Option<LoadGate<TauriPlatform<R>>>,
     state_store: Option<Box<dyn StateStore>>,
+    remember_disabled: bool,
+    disabled_file: Option<PathBuf>,
 }
 
 /// Where module state is kept when nothing else is configured.
 const DEFAULT_STATE_DIR: &str = "$APPDATA/wasm-backend/state";
+
+/// Where the names of disabled modules are kept when nothing else is
+/// configured.
+const DEFAULT_DISABLED_FILE: &str = "$APPDATA/wasm-backend/disabled.json";
 
 /// A boxed [`StateStore`], so the builder can hold any.
 struct BoxedStateStore(Box<dyn StateStore>);
@@ -126,6 +133,8 @@ impl<R: Runtime> Builder<R> {
             typescript_out_dir: None,
             load_gate: None,
             state_store: None,
+            remember_disabled: false,
+            disabled_file: None,
         }
     }
 
@@ -197,6 +206,28 @@ impl<R: Runtime> Builder<R> {
         self
     }
 
+    /// Keep modules that were switched off with [`WasmBackend::disable`]
+    /// (`disableModule` in the frontend) switched off the next time the app
+    /// starts, until they are enabled again. Off by default: the plugin
+    /// then keeps nothing between runs, and the app decides what a new run
+    /// starts with.
+    ///
+    /// The names are kept in `$APPDATA/wasm-backend/disabled.json` (see
+    /// [`Builder::disabled_file`]). A name in it wins over `"enabled":
+    /// true` in the module's configuration.
+    pub fn remember_disabled(mut self, enabled: bool) -> Self {
+        self.remember_disabled = enabled;
+        self
+    }
+
+    /// The file [`Builder::remember_disabled`] keeps the names of disabled
+    /// modules in. May start with `$APPDATA` and the like; relative paths
+    /// are resolved against the app data directory.
+    pub fn disabled_file(mut self, file: impl Into<PathBuf>) -> Self {
+        self.disabled_file = Some(file.into());
+        self
+    }
+
     /// Keep module state (what modules store through `tauri:backend/state`)
     /// in `dir`, one JSON file per module. May start with `$APPDATA` and the
     /// like; relative paths are resolved against the app data directory.
@@ -243,6 +274,8 @@ impl<R: Runtime> Builder<R> {
             typescript_out_dir,
             load_gate,
             state_store,
+            remember_disabled,
+            disabled_file,
         } = self;
         tauri::plugin::Builder::<R, Option<Config>>::new("wasm-backend")
             .invoke_handler(tauri::generate_handler![
@@ -282,6 +315,24 @@ impl<R: Runtime> Builder<R> {
                     .map(|d| std::env::current_dir().map(|c| c.join(d)))
                     .transpose()?;
                 let platform = TauriPlatform::new(app.clone());
+                let remembered = if remember_disabled {
+                    let file = disabled_file.unwrap_or_else(|| DEFAULT_DISABLED_FILE.into());
+                    let file = resolve_dir(&platform, &file, BaseDir::AppData)?;
+                    Some(Arc::new(disabled::Disabled::open(file)))
+                } else {
+                    None
+                };
+                // What was switched off in an earlier run starts switched
+                // off: an app module by its own configuration, an external
+                // plugin by the settings for that plugin.
+                for name in remembered.iter().flat_map(|r| r.names()) {
+                    if let Some(module) = config.modules.get_mut(&name) {
+                        module.enabled = Some(false);
+                    }
+                    if let Some(external) = &mut config.external {
+                        external.plugins.entry(name).or_default().enabled = Some(false);
+                    }
+                }
                 let state_store = match state_store {
                     Some(store) => store,
                     None => {
@@ -314,7 +365,7 @@ impl<R: Runtime> Builder<R> {
                 if let Some(gate) = load_gate {
                     core = core.load_gate(move |platform, request| gate(platform, request));
                 }
-                let backend = WasmBackend(core.build()?);
+                let backend = WasmBackend(core.build()?, remembered);
                 // Managed before modules load so host commands and event
                 // handlers they trigger can reach it.
                 app.manage(backend.clone());
